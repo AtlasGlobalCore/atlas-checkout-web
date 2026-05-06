@@ -1,166 +1,106 @@
-// ─── Stripe PaymentElement Strategy ──────────────────────────────────────────
-// Simulates Stripe's PaymentElement with card form, Apple/Google Pay, and security notice.
+// ─── Stripe PaymentElement Strategy (Real Integration) ───────────────────────
+// Uses @stripe/react-stripe-js with dynamic publishable_key from gatewayResponse.
+// No NEXT_PUBLIC_ environment variables are used — everything comes from the API.
 
 "use client";
 
-import { useState } from "react";
-import { Lock, Eye, EyeOff, CreditCard, Smartphone, Info } from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { useState, useMemo, useCallback } from "react";
+import { Lock, Loader2 } from "lucide-react";
+import { loadStripe, StripeElementsOptions } from "@stripe/stripe-js";
+import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
 import { useCheckoutStore } from "@/lib/checkout/checkout-store";
 import { useI18n } from "@/lib/i18n";
+import type { GatewayResponse } from "@/lib/checkout/types";
 
-export function StripeElementsStrategy() {
-  const { session } = useCheckoutStore();
+// ─── Inner form that uses Stripe hooks ──────────────────────────────────────
+function StripePaymentForm({ gatewayResponse }: { gatewayResponse: GatewayResponse }) {
   const { t } = useI18n();
+  const stripe = useStripe();
+  const elements = useElements();
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const { session, setStep, setPaymentStatus } = useCheckoutStore();
 
-  const [cardNumber, setCardNumber] = useState("");
-  const [cardHolder, setCardHolder] = useState("");
-  const [cardExpiry, setCardExpiry] = useState("");
-  const [cardCvv, setCvv] = useState("");
-  const [showCvv, setShowCvv] = useState(false);
+  const handleSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!stripe || !elements) return;
 
-  // Card number mask
-  const handleCardNumberChange = (value: string) => {
-    const digits = value.replace(/\D/g, "").slice(0, 16);
-    setCardNumber(digits.replace(/(\d{4})(?=\d)/g, "$1 "));
-  };
+      setIsProcessing(true);
+      setErrorMessage(null);
 
-  // Expiry mask
-  const handleExpiryChange = (value: string) => {
-    const digits = value.replace(/\D/g, "").slice(0, 4);
-    setCardExpiry(digits.replace(/(\d{2})(?=\d)/, "$1/"));
-  };
+      const { error: submitError } = await elements.submit();
+      if (submitError) {
+        setErrorMessage(submitError.message ?? t.unknownError);
+        setIsProcessing(false);
+        return;
+      }
 
-  // CVV mask
-  const handleCvvChange = (value: string) => {
-    setCvv(value.replace(/\D/g, "").slice(0, 4));
-  };
+      // Confirm payment using the client_secret from Atlas Core
+      const { error: confirmError } = await stripe.confirmPayment({
+        elements,
+        confirmParams: {
+          return_url: session?.successUrl
+            ? `${session.successUrl}?txn_id=${useCheckoutStore.getState().transactionId}`
+            : window.location.href,
+        },
+        // If the backend uses manual confirmation:
+        // clientSecret: gatewayResponse.client_secret,
+      });
+
+      if (confirmError) {
+        setErrorMessage(confirmError.message ?? t.unknownError);
+      } else {
+        // Payment succeeded — Stripe handles redirect, but we also update state
+        setPaymentStatus("paid");
+        setStep("SUCCESS");
+      }
+
+      setIsProcessing(false);
+    },
+    [stripe, elements, gatewayResponse.client_secret, session, t, setStep, setPaymentStatus]
+  );
 
   return (
-    <div className="space-y-4 sm:space-y-5 pt-1">
-      {/* Stripe PaymentElement Simulation */}
+    <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5 pt-1">
+      {/* Stripe PaymentElement — renders card input, Apple Pay, Google Pay */}
       <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
-        {/* Card Number */}
-        <div className="space-y-1.5 sm:space-y-2">
-          <Label htmlFor="stripe-card-number" className="text-xs sm:text-sm font-medium text-slate-700">
-            {t.cardNumber}
-          </Label>
-          <div className="relative">
-            <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 sm:h-5 sm:w-5 text-slate-400" />
-            <Input
-              id="stripe-card-number"
-              placeholder="1234 5678 9012 3456"
-              value={cardNumber}
-              onChange={(e) => handleCardNumberChange(e.target.value)}
-              className="h-11 bg-white pl-10 font-mono text-sm sm:text-base tracking-wider"
-              maxLength={19}
-              autoComplete="cc-number"
-            />
-          </div>
-        </div>
-
-        {/* Card Holder */}
-        <div className="space-y-1.5 sm:space-y-2">
-          <Label htmlFor="stripe-card-holder" className="text-xs sm:text-sm font-medium text-slate-700">
-            {t.cardHolder}
-          </Label>
-          <Input
-            id="stripe-card-holder"
-            placeholder="JOHN DOE"
-            value={cardHolder}
-            onChange={(e) => setCardHolder(e.target.value.toUpperCase())}
-            className="h-11 bg-white text-sm sm:text-base uppercase tracking-wide"
-            autoComplete="cc-name"
-          />
-        </div>
-
-        {/* Expiry + CVV Row */}
-        <div className="grid grid-cols-2 gap-3 sm:gap-4">
-          <div className="space-y-1.5 sm:space-y-2">
-            <Label htmlFor="stripe-expiry" className="text-xs sm:text-sm font-medium text-slate-700">
-              {t.cardExpiry}
-            </Label>
-            <Input
-              id="stripe-expiry"
-              placeholder="MM/YY"
-              value={cardExpiry}
-              onChange={(e) => handleExpiryChange(e.target.value)}
-              className="h-11 bg-white font-mono text-sm sm:text-base"
-              maxLength={5}
-              autoComplete="cc-exp"
-            />
-          </div>
-          <div className="space-y-1.5 sm:space-y-2">
-            <Label htmlFor="stripe-cvv" className="text-xs sm:text-sm font-medium text-slate-700">
-              {t.cardCvv}
-            </Label>
-            <div className="relative">
-              <Input
-                id="stripe-cvv"
-                type={showCvv ? "text" : "password"}
-                placeholder="•••"
-                value={cardCvv}
-                onChange={(e) => handleCvvChange(e.target.value)}
-                className="h-11 bg-white pr-10 font-mono text-sm sm:text-base"
-                maxLength={4}
-                autoComplete="cc-csc"
-              />
-              <button
-                type="button"
-                onClick={() => setShowCvv(!showCvv)}
-                className="absolute top-1/2 right-3 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
-                tabIndex={-1}
-              >
-                {showCvv ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
-          </div>
-        </div>
+        <PaymentElement
+          options={{
+            layout: "tabs",
+          }}
+        />
       </div>
 
-      {/* Apple Pay / Google Pay Buttons */}
-      <div className="space-y-2">
-        <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-slate-400 text-center">
-          Or pay with
-        </p>
-        <div className="grid grid-cols-2 gap-2 sm:gap-3">
-          {/* Apple Pay */}
-          <button
-            type="button"
-            disabled
-            className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-3 sm:py-3.5 text-xs sm:text-sm font-medium text-slate-400 cursor-not-allowed transition-colors min-h-[44px]"
-          >
-            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
-              <path d="M18.71 19.5C18.15 20.07 17.56 20.14 17.03 20.14C15.79 20.14 14.66 19.52 13.53 19.52C12.35 19.52 11.15 20.17 10.13 20.17C9.55 20.17 8.99 20.06 8.43 19.56C6.07 17.48 4.0 13.5 4.0 9.71C4.0 7.28 4.85 5.18 6.33 3.98C7.41 3.1 8.8 2.58 10.28 2.58C11.53 2.58 12.56 3.21 13.33 3.21C14.05 3.21 15.26 2.5 16.7 2.5C17.38 2.5 18.72 2.62 19.86 3.5C19.75 3.58 17.86 4.63 17.88 6.95C17.9 9.75 20.3 10.68 20.33 10.69C20.3 10.77 19.9 12.21 18.79 13.69C17.88 14.88 16.93 16.07 15.4 16.07C14.03 16.07 13.6 15.25 12.02 15.25C10.48 15.25 9.88 16.1 8.7 16.1C7.35 16.1 6.49 15.04 5.49 13.81C4.3 12.33 3.38 10.1 3.38 8.01C3.38 4.88 5.22 3.11 7.05 3.11C8.36 3.11 9.45 3.83 10.18 3.83C10.87 3.83 12.08 3.06 13.56 3.06C14.13 3.06 15.32 3.14 16.21 3.93" />
-            </svg>
-            <span>Apple Pay</span>
-          </button>
-
-          {/* Google Pay */}
-          <button
-            type="button"
-            disabled
-            className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-3 sm:py-3.5 text-xs sm:text-sm font-medium text-slate-400 cursor-not-allowed transition-colors min-h-[44px]"
-          >
-            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none">
-              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4" />
-              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
-              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
-              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
-            </svg>
-            <span>Google Pay</span>
-          </button>
+      {/* Error message */}
+      {errorMessage && (
+        <div className="flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2.5">
+          <span className="text-xs text-red-700 leading-relaxed">{errorMessage}</span>
         </div>
+      )}
 
-        {/* Configuration notice */}
-        <div className="flex items-start gap-2 rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
-          <Info className="h-3.5 w-3.5 shrink-0 text-slate-400 mt-0.5" />
-          <p className="text-[10px] sm:text-xs text-slate-500 leading-relaxed">
-            Configure Stripe publishable key to enable digital wallet payments
-          </p>
-        </div>
-      </div>
+      {/* Pay Button */}
+      <button
+        type="submit"
+        disabled={!stripe || isProcessing}
+        className={`flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3.5 text-sm font-semibold transition-all min-h-[48px] ${
+          !stripe || isProcessing
+            ? "cursor-not-allowed bg-slate-200 text-slate-400"
+            : "bg-slate-900 text-white shadow-lg shadow-slate-900/20 hover:bg-slate-800 active:scale-[0.98]"
+        }`}
+      >
+        {isProcessing ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span>{t.processing || "A processar..."}</span>
+          </>
+        ) : (
+          <>
+            <Lock className="h-4 w-4" />
+            <span>{t.payNow || "Pagar agora"}</span>
+          </>
+        )}
+      </button>
 
       {/* Powered by Stripe Badge */}
       <div className="flex items-center justify-center gap-2 pt-1">
@@ -181,6 +121,69 @@ export function StripeElementsStrategy() {
           {t.securityNotice}
         </p>
       </div>
+    </form>
+  );
+}
+
+// ─── Fallback when Stripe cannot be initialized ─────────────────────────────
+function StripeFallback({ error }: { error: string }) {
+  return (
+    <div className="space-y-4 pt-1">
+      <div className="flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2.5">
+        <span className="text-xs text-red-700 leading-relaxed">{error}</span>
+      </div>
+      <p className="text-center text-xs text-slate-400">
+        The payment method could not be initialized. Please try again or contact support.
+      </p>
     </div>
+  );
+}
+
+// ─── Main Component ─────────────────────────────────────────────────────────
+export function StripeElementsStrategy({ gatewayResponse }: { gatewayResponse: GatewayResponse }) {
+  const publishableKey = gatewayResponse.publishable_key as string | undefined;
+  const clientSecret = gatewayResponse.client_secret as string | undefined;
+
+  // Dynamically load Stripe using the key from Atlas Core (no NEXT_PUBLIC_ env vars)
+  const stripePromise = useMemo(() => {
+    if (!publishableKey) return null;
+    return loadStripe(publishableKey);
+  }, [publishableKey]);
+
+  // Missing publishable key from gateway
+  if (!publishableKey) {
+    return (
+      <StripeFallback error="Stripe publishable key was not returned by the payment gateway. Please check the Atlas Core configuration." />
+    );
+  }
+
+  // Stripe Elements options — client_secret is required for payment confirmation
+  const elementsOptions: StripeElementsOptions = {
+    ...(clientSecret ? { clientSecret } : {}),
+    appearance: {
+      theme: "stripe",
+      variables: {
+        colorPrimary: "#0f172a",
+        colorBackground: "#ffffff",
+        colorText: "#1e293b",
+        colorDanger: "#ef4444",
+        fontFamily: "system-ui, -apple-system, sans-serif",
+        borderRadius: "12px",
+        fontSizeBase: "14px",
+      },
+      rules: {
+        ".Input": {
+          padding: "12px 14px",
+          minHeight: "44px",
+        },
+      },
+    },
+    loader: "auto",
+  };
+
+  return (
+    <Elements stripe={stripePromise} options={elementsOptions}>
+      <StripePaymentForm gatewayResponse={gatewayResponse} />
+    </Elements>
   );
 }

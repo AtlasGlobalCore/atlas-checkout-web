@@ -102,6 +102,62 @@ export interface CrmRegisterResponse {
   message?: string;
 }
 
+// ─── Gateway Response (from Atlas Core) ─────────────────────────────────────
+// Each payment gateway returns different fields inside gatewayResponse.
+export interface GatewayResponse {
+  // Stripe
+  client_secret?: string;
+  publishable_key?: string;
+
+  // PIX
+  qr_code?: string;
+  qr_code_base64?: string;
+  pix_code?: string;
+  expires_at?: string;
+
+  // Viva Wallet
+  charge_token?: string;
+  redirect_url?: string;
+
+  // SEPA Instant
+  beneficiary_name?: string;
+  iban?: string;
+  bic_swift?: string;
+  reference?: string;
+
+  // MB WAY
+  phone?: string;
+  mbway_request_id?: string;
+
+  // Crypto
+  wallet_address?: string;
+  network?: string;
+  estimated_amount?: string;
+
+  // Generic
+  [key: string]: unknown;
+}
+
+// ─── Pay Request Body (Client → our API) ────────────────────────────────────
+export interface PayRequestBody {
+  sessionId: string;
+  storeSlug: string;
+  linkId: string;
+  payer: PayerFormData;
+  methodId: string;
+  methodType: PaymentMethodType;
+}
+
+// ─── Pay Response (Atlas Core → our API → Client) ───────────────────────────
+export interface PayResponseBody {
+  success: boolean;
+  transactionId: string;
+  payerId?: string;
+  methodType: PaymentMethodType;
+  gatewayResponse: GatewayResponse;
+  message?: string;
+}
+
 // ─── Payment Status (polling) ───────────────────────────────────────────────
 export type PaymentStatus = "pending" | "processing" | "paid" | "failed" | "expired";
 
@@ -109,6 +165,11 @@ export interface PaymentStatusResponse {
   sessionId: string;
   status: PaymentStatus;
   successUrl?: string;
+}
+
+// ─── Strategy Component Props ───────────────────────────────────────────────
+export interface StrategyProps {
+  gatewayResponse: GatewayResponse;
 }
 
 // ─── Store State ─────────────────────────────────────────────────────────────
@@ -131,6 +192,10 @@ export interface CheckoutState {
   isProcessing: boolean;
   paymentStatus: PaymentStatus | null;
 
+  // Gateway (after POST /checkout/pay)
+  transactionId: string | null;
+  gatewayResponse: GatewayResponse | null;
+
   // Actions
   setSession: (session: CheckoutSession) => void;
   setLoading: (v: boolean) => void;
@@ -144,6 +209,10 @@ export interface CheckoutState {
   selectMethod: (id: string) => void;
   setProcessing: (v: boolean) => void;
   setPaymentStatus: (status: PaymentStatus) => void;
+
+  setTransactionId: (id: string) => void;
+  setGatewayResponse: (response: GatewayResponse) => void;
+  clearGatewayResponse: () => void;
 
   reset: () => void;
 }

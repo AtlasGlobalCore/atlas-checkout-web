@@ -1,4 +1,9 @@
-// ─── Atlas Checkout — Main Page (Step-Based Router) ─────────────────────────
+// ─── Atlas Checkout — Main Page (Step-Based Smart Payment Router) ────────────
+// Flow:
+//   Step 1 (PAYER): Customer fills name/email/document + selects payment method
+//   POST /api/checkout/pay → Atlas Core → { transactionId, gatewayResponse }
+//   Step 2 (METHODS): Strategy component rendered with gatewayResponse injected
+//   Step 3 (SUCCESS): Animated checkmark → redirect to successUrl
 
 "use client";
 
@@ -9,45 +14,77 @@ import { useI18n, useDetectLocale, I18nProvider } from "@/lib/i18n";
 import { OrderSummary } from "./OrderSummary";
 import { PayerForm } from "./PayerForm";
 import { PaymentMethodSelector } from "./PaymentMethodSelector";
-import { StripeElementsStrategy } from "./strategies/StripeElementsStrategy";
-import { PixNativeStrategy } from "./strategies/PixNativeStrategy";
-import { VivaModalStrategy } from "./strategies/VivaModalStrategy";
-import { SepaInstantStrategy } from "./strategies/SepaInstantStrategy";
-import { MbWayFlowStrategy } from "./strategies/MbWayFlowStrategy";
-import { CryptoNativeStrategy } from "./strategies/CryptoNativeStrategy";
-import type { PaymentMethodType } from "@/lib/checkout/types";
+import { StrategySwitch } from "./strategies";
+import type { PayResponseBody } from "@/lib/checkout/types";
 import { LoadingScreen } from "./LoadingScreen";
 import { LocaleSwitcher } from "./LocaleSwitcher";
 import { SuccessScreen } from "./SuccessScreen";
 
-// ─── Step 1: Payer Data ─────────────────────────────────────────────────────
-function StepPayer({ onContinue }: { onContinue: () => void }) {
-  const { session, payerData, setRegistering, setPayerId, setError, setStep } = useCheckoutStore();
+// ─── Step 1: Payer Data + Method Selection ─────────────────────────────────
+function StepPayer({ onPaySuccess }: { onPaySuccess: (data: PayResponseBody) => void }) {
+  const {
+    session,
+    payerData,
+    selectedMethodId,
+    isRegistering,
+    setRegistering,
+    setPayerId,
+    setTransactionId,
+    setGatewayResponse,
+    setError,
+    setStep,
+  } = useCheckoutStore();
   const { t } = useI18n();
 
-  const isValid = payerData.fullName && payerData.email && payerData.fullName.length >= 3;
+  // Validate payer data
+  const isPayerValid = !!(payerData.fullName && payerData.email && payerData.fullName.length >= 3);
+
+  // Validate method selection
+  const isMethodValid = !!selectedMethodId;
+
+  const isValid = isPayerValid && isMethodValid;
+
+  const selectedMethod = session?.methods.find((m) => m.id === selectedMethodId);
 
   const handleContinue = async () => {
-    if (!isValid) return;
+    if (!isValid || !session || !selectedMethod) return;
+
     setRegistering(true);
     setError(null);
 
     try {
-      // POST to Atlas Core — register payer in CRM
+      // POST to our API → proxies to Atlas Core
       const res = await fetch("/api/checkout/pay", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sessionId: session?.id,
+          sessionId: session.id,
+          storeSlug: session.storeSlug,
+          linkId: session.linkId,
           payer: payerData,
+          methodId: selectedMethod.id,
+          methodType: selectedMethod.method_type,
         }),
       });
 
-      if (!res.ok) throw new Error("Erro ao registar dados");
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || "Erro ao iniciar pagamento");
+      }
 
-      const data = await res.json();
-      setPayerId(data.payerId);
-      onContinue();
+      const data: PayResponseBody = await res.json();
+
+      if (!data.success) {
+        throw new Error(data.error || "Erro ao iniciar pagamento");
+      }
+
+      // Store gateway data in Zustand
+      if (data.payerId) setPayerId(data.payerId);
+      if (data.transactionId) setTransactionId(data.transactionId);
+      if (data.gatewayResponse) setGatewayResponse(data.gatewayResponse);
+
+      // Advance to payment method step
+      onPaySuccess(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : t.unknownError);
     } finally {
@@ -57,23 +94,45 @@ function StepPayer({ onContinue }: { onContinue: () => void }) {
 
   return (
     <div className="space-y-6">
+      {/* Section: Customer Data */}
       <div>
         <h2 className="text-lg font-semibold text-slate-900">{t.yourData}</h2>
         <p className="mt-1 text-sm text-slate-500">{t.yourDataDescription}</p>
       </div>
       <PayerForm />
+
+      {/* Divider */}
+      <div className="h-px bg-slate-100" />
+
+      {/* Section: Payment Method Selection */}
+      <div>
+        <h2 className="text-lg font-semibold text-slate-900">{t.paymentMethod}</h2>
+        <p className="mt-1 text-sm text-slate-500">{t.selectToContinue}</p>
+      </div>
+      {session && (
+        <PaymentMethodSelector
+          methods={session.methods}
+          selectedId={selectedMethodId}
+          onSelect={useCheckoutStore.getState().selectMethod}
+        />
+      )}
+
+      {/* Submit Button */}
       <button
         type="button"
         onClick={handleContinue}
-        disabled={!isValid || setRegistering === undefined}
+        disabled={!isValid || isRegistering}
         className={`flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3.5 text-sm font-semibold transition-all min-h-[48px] ${
-          isValid
+          isValid && !isRegistering
             ? "bg-slate-900 text-white shadow-lg shadow-slate-900/20 hover:bg-slate-800 active:scale-[0.98]"
             : "cursor-not-allowed bg-slate-200 text-slate-400"
         }`}
       >
-        {false ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
+        {isRegistering ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span>{t.processing || "A processar..."}</span>
+          </>
         ) : (
           <>
             {t.continueToPayment}
@@ -85,19 +144,18 @@ function StepPayer({ onContinue }: { onContinue: () => void }) {
   );
 }
 
-// ─── Step 2: Payment Methods + Strategy ─────────────────────────────────────
+// ─── Step 2: Payment Strategy (rendered AFTER gatewayResponse is available) ──
 function StepPayment() {
-  const { session, selectedMethodId, selectMethod, setStep } = useCheckoutStore();
+  const { session, selectedMethodId, gatewayResponse, setStep } = useCheckoutStore();
   const { t } = useI18n();
 
-  if (!session) return null;
+  if (!session || !gatewayResponse) return null;
 
   const selectedMethod = session.methods.find((m) => m.id === selectedMethodId);
-  const strategyKey = selectedMethod?.method_type ?? "__none__";
 
   return (
     <div className="space-y-6">
-      {/* Back button */}
+      {/* Back button — goes back to Payer step */}
       <button
         type="button"
         onClick={() => setStep("PAYER")}
@@ -107,57 +165,31 @@ function StepPayment() {
         {t.backToDetails}
       </button>
 
-      {/* Method selector */}
-      <PaymentMethodSelector
-        methods={session.methods}
-        selectedId={selectedMethodId}
-        onSelect={selectMethod}
-      />
+      {/* Selected method label */}
+      <div className="flex items-center gap-2 text-sm text-slate-600">
+        <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+          {t.paymentMethod}
+        </span>
+        <span className="text-slate-300">·</span>
+        <span className="font-semibold text-slate-900">{selectedMethod?.label}</span>
+      </div>
 
-      {/* Strategy component — rendered via key switch */}
-      {selectedMethodId && (
-        <div className={selectedMethodId === strategyKey ? "" : ""}>
-          <div className="h-px bg-slate-100" />
-          <StrategySwitch methodType={selectedMethod?.method_type} />
-        </div>
-      )}
-
-      {!selectedMethodId && (
-        <p className="text-center text-sm text-slate-400">{t.selectToContinue}</p>
-      )}
+      {/* Strategy component — gatewayResponse injected */}
+      <StrategySwitch methodType={selectedMethod?.method_type} gatewayResponse={gatewayResponse} />
     </div>
   );
 }
 
-function StrategySwitch({ methodType }: { methodType?: PaymentMethodType }) {
-  switch (methodType) {
-    case "STRIPE_ELEMENTS":
-      return <StripeElementsStrategy />;
-    case "PIX_NATIVE":
-      return <PixNativeStrategy />;
-    case "VIVA_MODAL":
-      return <VivaModalStrategy />;
-    case "SEPA_INSTANT":
-      return <SepaInstantStrategy />;
-    case "MBWAY_FLOW":
-      return <MbWayFlowStrategy />;
-    case "CRYPTO_NATIVE":
-      return <CryptoNativeStrategy />;
-    default:
-      return null;
-  }
-}
-
 // ─── Main Checkout Content ──────────────────────────────────────────────────
 function CheckoutContent() {
-  const { session, step, error, setSession, setError, setLoading } = useCheckoutStore();
+  const { session, step, error, setSession, setError, setLoading, setStep } = useCheckoutStore();
   const detected = useDetectLocale();
   const [showLoading, setShowLoading] = useState(true);
   const hasFetched = useRef(false);
 
   const handleLoadingComplete = useCallback(() => setShowLoading(false), []);
 
-  // Fetch session
+  // Fetch session on mount
   useEffect(() => {
     if (hasFetched.current) return;
     hasFetched.current = true;
@@ -179,12 +211,17 @@ function CheckoutContent() {
     return () => clearTimeout(timer);
   }, [setSession, setError, setLoading, detected.loading]);
 
-  // Loading
+  // Handle successful POST /checkout/pay — advance to METHODS step
+  const handlePaySuccess = useCallback((_data: PayResponseBody) => {
+    setStep("METHODS");
+  }, [setStep]);
+
+  // Loading screen
   if (showLoading && !error && step === "LOADING") {
     return <LoadingScreen onComplete={handleLoadingComplete} />;
   }
 
-  // Success
+  // Success screen
   if (step === "SUCCESS") {
     return <SuccessScreen />;
   }
@@ -198,10 +235,13 @@ function CheckoutContent() {
             <AlertCircle className="h-8 w-8 text-red-500" />
           </div>
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">{t_error(error)}</h2>
+            <h2 className="text-lg font-semibold text-slate-900">{error}</h2>
             <p className="mt-1 text-sm text-slate-500">{error}</p>
           </div>
-          <button onClick={() => window.location.reload()} className="rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-800">
+          <button
+            onClick={() => window.location.reload()}
+            className="rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-800"
+          >
             Tentar novamente
           </button>
         </div>
@@ -243,7 +283,7 @@ function CheckoutContent() {
           {/* Right: Form */}
           <div className="order-1 lg:order-2 lg:col-span-3">
             <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-6 lg:p-8">
-              {step === "PAYER" && <StepPayer onContinue={() => {}} />}
+              {step === "PAYER" && <StepPayer onPaySuccess={handlePaySuccess} />}
               {step === "METHODS" && <StepPayment />}
             </div>
 
@@ -252,7 +292,9 @@ function CheckoutContent() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="text-slate-300">
                 <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              <span>Powered by <span className="font-semibold text-slate-500">Atlas</span></span>
+              <span>
+                Powered by <span className="font-semibold text-slate-500">Atlas</span>
+              </span>
             </div>
           </div>
         </div>
@@ -260,8 +302,6 @@ function CheckoutContent() {
     </div>
   );
 }
-
-function t_error(error: string) { return error; }
 
 export function CheckoutPage() {
   const detected = useDetectLocale();

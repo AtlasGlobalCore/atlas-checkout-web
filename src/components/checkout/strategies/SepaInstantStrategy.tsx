@@ -1,5 +1,5 @@
-// ─── SEPA Instant Transfer Strategy ──────────────────────────────────────────
-// Bank transfer details with copy functionality and email sharing.
+// ─── SEPA Instant Transfer Strategy (Wired to Atlas Core) ────────────────────
+// Uses beneficiary_name, iban, bic_swift, reference from gatewayResponse.
 
 "use client";
 
@@ -7,47 +7,48 @@ import { useState, useCallback } from "react";
 import { Copy, Check, Mail, Building2, ArrowRightLeft, Clock, ShieldCheck } from "lucide-react";
 import { useCheckoutStore } from "@/lib/checkout/checkout-store";
 import { useI18n } from "@/lib/i18n";
+import type { GatewayResponse } from "@/lib/checkout/types";
 
-const BENEFICIARY = "ATLAS GLOBAL CORE LDA";
-const IBAN = "PT50 1234 5678 9012 3456 78901 234";
-const BIC_SWIFT = "ATLSPT21";
-
-export function SepaInstantStrategy() {
-  const { session } = useCheckoutStore();
+export function SepaInstantStrategy({ gatewayResponse }: { gatewayResponse: GatewayResponse }) {
+  const { session, payerData } = useCheckoutStore();
   const { t, formatAmount } = useI18n();
-  const [copiedIban, setCopiedIban] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
 
   const total = session?.order.total ?? 0;
-  const reference = session?.id ?? "N/A";
 
-  const handleCopyIban = useCallback(async () => {
+  // Data from Atlas Core gatewayResponse (fallback to defaults for mock)
+  const beneficiary = (gatewayResponse.beneficiary_name as string) || "ATLAS GLOBAL CORE LDA";
+  const iban = (gatewayResponse.iban as string) || "PT50 1234 5678 9012 3456 78901 234";
+  const bicSwift = (gatewayResponse.bic_swift as string) || "ATLSPT21";
+  const reference = (gatewayResponse.reference as string) || session?.id || "N/A";
+
+  const handleCopy = useCallback(async (value: string, fieldId: string) => {
     try {
-      await navigator.clipboard.writeText(IBAN);
+      await navigator.clipboard.writeText(value);
     } catch {
       const ta = document.createElement("textarea");
-      ta.value = IBAN;
+      ta.value = value;
       document.body.appendChild(ta);
       ta.select();
       document.execCommand("copy");
       document.body.removeChild(ta);
     }
-    setCopiedIban(true);
-    setTimeout(() => setCopiedIban(false), 2500);
+    setCopiedField(fieldId);
+    setTimeout(() => setCopiedField(null), 2500);
   }, []);
 
   const handleSendEmail = useCallback(() => {
-    // In production, this would call an API to send bank details via email
-    const subject = encodeURIComponent("Bank Transfer Details - Atlas Checkout");
+    const subject = encodeURIComponent("Detalhes de Transferência Bancária — Atlas Checkout");
     const body = encodeURIComponent(
-      `Please transfer ${formatAmount(total)} to:\n\n` +
-      `Beneficiary: ${BENEFICIARY}\n` +
-      `IBAN: ${IBAN}\n` +
-      `BIC/SWIFT: ${BIC_SWIFT}\n` +
-      `Reference: ${reference}\n\n` +
-      `SEPA Instant transfers process in under 10 seconds.`
+      `Por favor, transfira ${formatAmount(total)} para:\n\n` +
+      `Beneficiário: ${beneficiary}\n` +
+      `IBAN: ${iban}\n` +
+      `BIC/SWIFT: ${bicSwift}\n` +
+      `Referência: ${reference}\n\n` +
+      `As transferências SEPA Instant são processadas em menos de 10 segundos.`
     );
-    window.open(`mailto:?subject=${subject}&body=${body}`, "_self");
-  }, [formatAmount, total, reference]);
+    window.open(`mailto:${payerData.email || ""}?subject=${subject}&body=${body}`, "_self");
+  }, [formatAmount, total, beneficiary, iban, bicSwift, reference, payerData.email]);
 
   return (
     <div className="space-y-4 sm:space-y-5 pt-1">
@@ -65,7 +66,7 @@ export function SepaInstantStrategy() {
         <div className="flex items-center gap-2 bg-slate-50 border-b border-slate-200 px-4 py-3">
           <Building2 className="h-4 w-4 text-slate-500" />
           <span className="text-xs sm:text-sm font-semibold text-slate-700">
-            Bank Transfer Details
+            Detalhes da Transferência
           </span>
         </div>
 
@@ -74,10 +75,10 @@ export function SepaInstantStrategy() {
           {/* Beneficiary */}
           <div className="px-4 py-3">
             <p className="text-[10px] sm:text-xs font-medium uppercase tracking-wider text-slate-400">
-              Beneficiary
+              Beneficiário
             </p>
             <p className="mt-1 text-sm sm:text-base font-semibold text-slate-900">
-              {BENEFICIARY}
+              {beneficiary}
             </p>
           </div>
 
@@ -88,27 +89,21 @@ export function SepaInstantStrategy() {
             </p>
             <div className="mt-1 flex items-center gap-2">
               <p className="flex-1 text-sm sm:text-base font-mono font-semibold text-slate-900 tracking-wide break-all">
-                {IBAN}
+                {iban}
               </p>
               <button
                 type="button"
-                onClick={handleCopyIban}
+                onClick={() => handleCopy(iban, "iban")}
                 className={`shrink-0 rounded-md px-2.5 py-1.5 text-[10px] sm:text-xs font-medium transition-all min-h-[32px] ${
-                  copiedIban
+                  copiedField === "iban"
                     ? "bg-emerald-100 text-emerald-700 border border-emerald-200"
                     : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
-                {copiedIban ? (
-                  <span className="flex items-center gap-1">
-                    <Check className="h-3 w-3" />
-                    {t.copied}
-                  </span>
+                {copiedField === "iban" ? (
+                  <span className="flex items-center gap-1"><Check className="h-3 w-3" />{t.copied}</span>
                 ) : (
-                  <span className="flex items-center gap-1">
-                    <Copy className="h-3 w-3" />
-                    {t.copy}
-                  </span>
+                  <span className="flex items-center gap-1"><Copy className="h-3 w-3" />{t.copy}</span>
                 )}
               </button>
             </div>
@@ -119,19 +114,53 @@ export function SepaInstantStrategy() {
             <p className="text-[10px] sm:text-xs font-medium uppercase tracking-wider text-slate-400">
               BIC / SWIFT
             </p>
-            <p className="mt-1 text-sm sm:text-base font-mono font-semibold text-slate-900 tracking-wider">
-              {BIC_SWIFT}
-            </p>
+            <div className="mt-1 flex items-center gap-2">
+              <p className="flex-1 text-sm sm:text-base font-mono font-semibold text-slate-900 tracking-wider">
+                {bicSwift}
+              </p>
+              <button
+                type="button"
+                onClick={() => handleCopy(bicSwift, "bic")}
+                className={`shrink-0 rounded-md px-2.5 py-1.5 text-[10px] sm:text-xs font-medium transition-all min-h-[32px] ${
+                  copiedField === "bic"
+                    ? "bg-emerald-100 text-emerald-700 border border-emerald-200"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                {copiedField === "bic" ? (
+                  <span className="flex items-center gap-1"><Check className="h-3 w-3" />{t.copied}</span>
+                ) : (
+                  <span className="flex items-center gap-1"><Copy className="h-3 w-3" />{t.copy}</span>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Reference */}
           <div className="px-4 py-3">
             <p className="text-[10px] sm:text-xs font-medium uppercase tracking-wider text-slate-400">
-              Reference
+              Referência
             </p>
-            <p className="mt-1 text-sm sm:text-base font-mono text-slate-700 break-all">
-              {reference}
-            </p>
+            <div className="mt-1 flex items-center gap-2">
+              <p className="flex-1 text-sm sm:text-base font-mono text-slate-700 break-all">
+                {reference}
+              </p>
+              <button
+                type="button"
+                onClick={() => handleCopy(reference, "ref")}
+                className={`shrink-0 rounded-md px-2.5 py-1.5 text-[10px] sm:text-xs font-medium transition-all min-h-[32px] ${
+                  copiedField === "ref"
+                    ? "bg-emerald-100 text-emerald-700 border border-emerald-200"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                {copiedField === "ref" ? (
+                  <span className="flex items-center gap-1"><Check className="h-3 w-3" />{t.copied}</span>
+                ) : (
+                  <span className="flex items-center gap-1"><Copy className="h-3 w-3" />{t.copy}</span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -143,7 +172,7 @@ export function SepaInstantStrategy() {
         className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs sm:text-sm font-medium text-slate-700 transition-all hover:bg-slate-50 active:bg-slate-100 min-h-[44px]"
       >
         <Mail className="h-4 w-4" />
-        Send by Email
+        Enviar por Email
       </button>
 
       {/* SEPA Instant Processing Notice */}
@@ -165,11 +194,6 @@ export function SepaInstantStrategy() {
         <p className="text-[11px] sm:text-xs text-emerald-700 leading-relaxed">
           {t.securityNotice}
         </p>
-      </div>
-
-      {/* Exchange icon */}
-      <div className="flex items-center justify-center gap-2 pt-1 text-slate-300">
-        <ArrowRightLeft className="h-4 w-4" />
       </div>
     </div>
   );

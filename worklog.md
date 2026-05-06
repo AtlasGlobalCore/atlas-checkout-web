@@ -47,3 +47,30 @@ Stage Summary:
 - All components use "use client", useCheckoutStore, useI18n with formatAmount, Tailwind-only styling
 - Fully responsive mobile-first design with 44px touch targets
 - Zero lint errors, dev server verified
+
+---
+Task ID: 5
+Agent: main
+Task: Wire frontend to Atlas Core backend (S2S integration, dynamic Stripe, gatewayResponse injection)
+
+Work Log:
+- Updated types.ts — Added GatewayResponse, PayRequestBody, PayResponseBody, StrategyProps interfaces; updated CheckoutState with transactionId, gatewayResponse states + actions
+- Updated checkout-store.ts — Added gatewayResponse/transactionId state, setTransactionId/setGatewayResponse/clearGatewayResponse actions, reset clears gateway data
+- Rewrote /api/checkout/pay/route.ts — Real S2S proxy to Atlas Core using process.env.ATLAS_CORE_API_URL + optional ATLAS_CORE_API_KEY; mock fallback when env vars not set; method-specific mock gatewayResponses for each strategy
+- Installed @stripe/react-stripe-js@6.3.0 and @stripe/stripe-js@9.4.0
+- Rewrote StripeElementsStrategy.tsx — Real Stripe PaymentElement integration with dynamic loadStripe(gatewayResponse.publishable_key); NO NEXT_PUBLIC_ env vars; StripePaymentForm with submit → confirmPayment flow; custom appearance matching Atlas design; fallback component when publishable_key missing
+- Rewrote PixNativeStrategy.tsx — Now reads qr_code_base64, pix_code, expires_at from gatewayResponse; countdown calculated from real expires_at; expired state with refresh capability
+- Rewrote VivaModalStrategy.tsx — Reads charge_token, redirect_url from gatewayResponse; real redirect to Viva Wallet when redirect_url present
+- Rewrote SepaInstantStrategy.tsx — Reads beneficiary_name, iban, bic_swift, reference from gatewayResponse; "Send by Email" uses payer email from store; copy buttons for all fields
+- Rewrote MbWayFlowStrategy.tsx — Reads mbway_request_id, phone from gatewayResponse; added "requesting" stage with loading spinner; payment status polling via /api/checkout/status every 5s; error stage with retry
+- Rewrote CryptoNativeStrategy.tsx — Reads wallet_address, network, estimated_amount from gatewayResponse; dynamic network config from gateway response; block explorer link built from address
+- Rewrote strategies/index.tsx — All strategies now accept { gatewayResponse: GatewayResponse } prop; exported StrategySwitch component; removed old PaymentMethod-based getStrategyComponent
+- Updated CheckoutPage.tsx — Two-step flow: Step 1 = PayerForm + PaymentMethodSelector → POST /api/checkout/pay with full payload → Step 2 = Strategy rendered with gatewayResponse injected; handlePaySuccess advances to METHODS step; StepPayer shows both payer form and method selection with combined validation; loading state on submit button
+- Fixed ESLint errors: forward reference in MbWayFlowStrategy (reordered startPolling before handleSendRequest), removed unused eslint-disable directive
+
+Stage Summary:
+- Full S2S wiring complete: Client → /api/checkout/pay → Atlas Core → { transactionId, gatewayResponse }
+- All 6 strategies now receive and use real gatewayResponse data from Atlas Core API
+- Stripe uses dynamic loadStripe() with no frontend env vars — publishable_key comes exclusively from API
+- Zero lint errors, dev server verified (GET / 200)
+- Environment variables: ATLAS_CORE_API_URL, ATLAS_CORE_API_KEY (optional, for Bearer auth)

@@ -1,11 +1,11 @@
-// ─── Strategy Registry ──────────────────────────────────────────────────────
+// ─── Strategy Registry & Switch ──────────────────────────────────────────────
 // Maps payment method types to their strategy components (Strategy Pattern).
+// Every strategy receives gatewayResponse as a prop from the Atlas Core API.
 
 "use client";
 
-import type { PaymentMethod } from "@/lib/checkout/types";
+import type { PaymentMethodType, GatewayResponse } from "@/lib/checkout/types";
 
-// New strategy components (Task 4)
 import { StripeElementsStrategy } from "./StripeElementsStrategy";
 import { PixNativeStrategy } from "./PixNativeStrategy";
 import { VivaModalStrategy } from "./VivaModalStrategy";
@@ -13,10 +13,9 @@ import { SepaInstantStrategy } from "./SepaInstantStrategy";
 import { MbWayFlowStrategy } from "./MbWayFlowStrategy";
 import { CryptoNativeStrategy } from "./CryptoNativeStrategy";
 
-type StrategyComponent = React.ComponentType<Record<string, never>>;
+type StrategyComponent = React.ComponentType<{ gatewayResponse: GatewayResponse }>;
 
-// New method_type → component mapping
-const newStrategyMap: Record<string, StrategyComponent> = {
+const strategyMap: Record<string, StrategyComponent> = {
   STRIPE_ELEMENTS: StripeElementsStrategy,
   PIX_NATIVE: PixNativeStrategy,
   VIVA_MODAL: VivaModalStrategy,
@@ -26,11 +25,29 @@ const newStrategyMap: Record<string, StrategyComponent> = {
 };
 
 /**
- * Returns the correct strategy component for a given payment method.
- * Falls back to a placeholder if the method is not implemented.
+ * StrategySwitch — renders the correct strategy component based on methodType.
+ * gatewayResponse is injected from the POST /checkout/pay response.
  */
-export function getStrategyComponent(method: PaymentMethod): StrategyComponent {
-  return newStrategyMap[method.method_type] ?? DefaultStrategy;
+export function StrategySwitch({
+  methodType,
+  gatewayResponse,
+}: {
+  methodType?: PaymentMethodType;
+  gatewayResponse: GatewayResponse;
+}) {
+  if (!methodType) return null;
+
+  const Component = strategyMap[methodType];
+  if (!Component) return <DefaultStrategy />;
+
+  return <Component gatewayResponse={gatewayResponse} />;
+}
+
+/**
+ * Returns the strategy component class for a given method_type.
+ */
+export function getStrategyComponent(methodType: PaymentMethodType): StrategyComponent {
+  return strategyMap[methodType] ?? DefaultStrategy;
 }
 
 /** Placeholder for unimplemented methods */

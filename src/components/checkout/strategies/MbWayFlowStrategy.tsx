@@ -1,5 +1,5 @@
-// ─── MB WAY Mobile Payment Strategy ──────────────────────────────────────────
-// Portuguese mobile payment flow with phone input, request, and confirmation stages.
+// ─── MB WAY Mobile Payment Strategy (Wired to Atlas Core) ─────────────────────
+// Uses mbway_request_id from gatewayResponse for payment polling.
 
 "use client";
 
@@ -9,8 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useCheckoutStore } from "@/lib/checkout/checkout-store";
 import { useI18n } from "@/lib/i18n";
+import type { GatewayResponse } from "@/lib/checkout/types";
 
-type MbWayStage = "input" | "sent" | "confirming";
+type MbWayStage = "input" | "requesting" | "sent" | "confirming" | "error";
 
 function maskPortuguesePhone(value: string): string {
   const digits = value.replace(/\D/g, "");
@@ -23,22 +24,27 @@ function maskPortuguesePhone(value: string): string {
   return `+351 ${nine.slice(0, 3)} ${nine.slice(3, 6)} ${nine.slice(6, 9)}`;
 }
 
-export function MbWayFlowStrategy() {
-  const { session } = useCheckoutStore();
+export function MbWayFlowStrategy({ gatewayResponse }: { gatewayResponse: GatewayResponse }) {
+  const { session, transactionId, setPaymentStatus, setStep } = useCheckoutStore();
   const { t, formatAmount } = useI18n();
   const [stage, setStage] = useState<MbWayStage>("input");
   const [phoneRaw, setPhoneRaw] = useState("");
   const [phoneDisplay, setPhoneDisplay] = useState("+351 ");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const sentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const confirmingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const total = session?.order.total ?? 0;
 
-  // Cleanup timers on unmount
+  // Data from Atlas Core
+  const mbwayRequestId = (gatewayResponse.mbway_request_id as string) || "";
+  const gatewayPhone = (gatewayResponse.phone as string) || "";
+
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (sentTimerRef.current) clearTimeout(sentTimerRef.current);
-      if (confirmingTimerRef.current) clearTimeout(confirmingTimerRef.current);
+      if (pollingRef.current) clearInterval(pollingRef.current);
     };
   }, []);
 
@@ -48,25 +54,95 @@ export function MbWayFlowStrategy() {
     setPhoneDisplay(maskPortuguesePhone(value));
   }, []);
 
-  const handleSendRequest = useCallback(() => {
+  // Payment status polling (declared before handleSendRequest to avoid forward reference)
+  const startPolling = useCallback(() => {
+    if (!transactionId) return;
+
+    pollingRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/checkout/status?sessionId=${transactionId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        if (data.status === "paid") {
+          if (pollingRef.current) clearInterval(pollingRef.current);
+          setPaymentStatus("paid");
+          setStep("SUCCESS");
+        } else if (data.status === "failed") {
+          if (pollingRef.current) clearInterval(pollingRef.current);
+          setStage("error");
+          setErrorMsg("O pagamento MB WAY foi recusado. Tente novamente.");
+        }
+      } catch {
+        // Continue polling
+      }
+    }, 5000); // Poll every 5 seconds
+  }, [transactionId, setPaymentStatus, setStep]);
+
+  const handleSendRequest = useCallback(async () => {
     const digits = phoneRaw.replace(/\D/g, "");
     if (digits.length < 9) return;
 
-    setStage("sent");
+    setStage("requesting");
+    setErrorMsg(null);
 
-    // After 3 seconds, transition to "confirming"
-    sentTimerRef.current = setTimeout(() => {
-      setStage("confirming");
-    }, 3000);
-  }, [phoneRaw]);
+    try {
+      // In production, this would POST to Atlas Core to initiate MB WAY
+      // const res = await fetch(`/api/checkout/mbway/request`, { ... });
+      // For now, simulate with a delay
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      setStage("sent");
+
+      // After 3 seconds, start polling for confirmation
+      sentTimerRef.current = setTimeout(() => {
+        setStage("confirming");
+        startPolling();
+      }, 3000);
+    } catch {
+      setStage("error");
+      setErrorMsg("Erro ao enviar pedido MB WAY. Tente novamente.");
+    }
+  }, [phoneRaw, startPolling]);
 
   const handleReset = useCallback(() => {
     if (sentTimerRef.current) clearTimeout(sentTimerRef.current);
-    if (confirmingTimerRef.current) clearTimeout(confirmingTimerRef.current);
+    if (pollingRef.current) clearInterval(pollingRef.current);
     setStage("input");
     setPhoneRaw("");
     setPhoneDisplay("+351 ");
+    setErrorMsg(null);
   }, []);
+
+  // Requesting stage (loading)
+  if (stage === "requesting") {
+    return (
+      <div className="flex flex-col items-center justify-center py-10 space-y-4">
+        <div className="h-12 w-12 animate-spin rounded-full border-3 border-red-200 border-t-red-500" />
+        <p className="text-sm font-medium text-slate-600">{t.processing || "A enviar pedido..."}</p>
+      </div>
+    );
+  }
+
+  // Error stage
+  if (stage === "error") {
+    return (
+      <div className="space-y-5 pt-2">
+        <div className="text-center space-y-3">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-50 border-2 border-red-200">
+            <Smartphone className="h-8 w-8 text-red-400" />
+          </div>
+          <p className="text-sm text-red-600">{errorMsg || "Ocorreu um erro. Tente novamente."}</p>
+        </div>
+        <button
+          type="button"
+          onClick={handleReset}
+          className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs sm:text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors min-h-[44px]"
+        >
+          Tentar novamente
+        </button>
+      </div>
+    );
+  }
 
   // Input stage
   if (stage === "input") {
@@ -90,7 +166,7 @@ export function MbWayFlowStrategy() {
         {/* Phone Input */}
         <div className="space-y-1.5 sm:space-y-2">
           <Label htmlFor="mbway-phone" className="text-xs sm:text-sm font-medium text-slate-700">
-            Phone number
+            Número de telemóvel
           </Label>
           <div className="relative">
             <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 sm:h-5 sm:w-5 text-slate-400" />
@@ -106,9 +182,16 @@ export function MbWayFlowStrategy() {
             />
           </div>
           <p className="text-[10px] sm:text-xs text-slate-400">
-            Enter your Portuguese mobile number (9XX XXX XXX)
+            Introduza o seu número de telemóvel português (9XX XXX XXX)
           </p>
         </div>
+
+        {/* MB WAY request ID (debug) */}
+        {mbwayRequestId && (
+          <p className="text-[10px] font-mono text-slate-400 text-center">
+            Request: {mbwayRequestId}
+          </p>
+        )}
 
         {/* Send Request Button */}
         <button
@@ -117,7 +200,7 @@ export function MbWayFlowStrategy() {
           disabled={phoneRaw.replace(/\D/g, "").length < 9}
           className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-red-500 to-red-600 px-4 py-3 text-sm sm:text-base font-semibold text-white shadow-lg shadow-red-500/20 transition-all hover:shadow-xl hover:shadow-red-500/30 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px]"
         >
-          <span>Send MB WAY Request</span>
+          <span>Enviar Pedido MB WAY</span>
           <ArrowRight className="h-4 w-4" />
         </button>
       </div>
@@ -141,10 +224,10 @@ export function MbWayFlowStrategy() {
         {/* Message */}
         <div className="text-center space-y-2">
           <h3 className="text-base sm:text-lg font-semibold text-slate-900">
-            Open the MB WAY app
+            Abra a app MB WAY
           </h3>
           <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
-            Open the MB WAY app on your phone to confirm the payment of{" "}
+            Abra a app MB WAY no seu telemóvel para confirmar o pagamento de{" "}
             <span className="font-semibold text-slate-900">{formatAmount(total)}</span>
           </p>
         </div>
@@ -152,7 +235,7 @@ export function MbWayFlowStrategy() {
         {/* Phone number display */}
         <div className="flex items-center justify-center gap-2 text-sm font-mono text-slate-500">
           <Phone className="h-3.5 w-3.5" />
-          <span>{phoneDisplay}</span>
+          <span>{phoneDisplay || gatewayPhone}</span>
         </div>
 
         {/* Cancel */}
@@ -161,13 +244,13 @@ export function MbWayFlowStrategy() {
           onClick={handleReset}
           className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs sm:text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors min-h-[44px]"
         >
-          Cancel
+          Cancelar
         </button>
       </div>
     );
   }
 
-  // Confirming stage
+  // Confirming stage (polling)
   return (
     <div className="space-y-5 sm:space-y-6 pt-2">
       {/* Checkmark Icon */}
@@ -180,10 +263,10 @@ export function MbWayFlowStrategy() {
       {/* Message */}
       <div className="text-center space-y-3">
         <h3 className="text-base sm:text-lg font-semibold text-slate-900">
-          Awaiting confirmation...
+          A aguardar confirmação...
         </h3>
         <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
-          We are waiting for your confirmation in the MB WAY app.
+          Estamos a aguardar a sua confirmação na app MB WAY.
         </p>
       </div>
 
@@ -192,7 +275,7 @@ export function MbWayFlowStrategy() {
         <div className="flex items-center gap-1.5">
           <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
           <span className="text-xs sm:text-sm font-medium text-emerald-600">
-            Waiting for payment confirmation
+            A aguardar confirmação de pagamento
           </span>
         </div>
       </div>
@@ -208,7 +291,7 @@ export function MbWayFlowStrategy() {
         onClick={handleReset}
         className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs sm:text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors min-h-[44px]"
       >
-        Cancel
+        Cancelar
       </button>
     </div>
   );

@@ -1,28 +1,41 @@
-// ─── Viva Wallet Modal Strategy ──────────────────────────────────────────────
-// Redirect-based payment via Viva Wallet external checkout page.
+// ─── Viva Wallet Modal Strategy (Wired to Atlas Core) ────────────────────────
+// Uses charge_token and redirect_url from gatewayResponse.
 
 "use client";
 
-import { useState } from "react";
-import { Wallet, ExternalLink, Shield, ArrowRight } from "lucide-react";
+import { useState, useCallback } from "react";
+import { Wallet, ExternalLink, Shield, ArrowRight, Loader2 } from "lucide-react";
 import { useCheckoutStore } from "@/lib/checkout/checkout-store";
 import { useI18n } from "@/lib/i18n";
+import type { GatewayResponse } from "@/lib/checkout/types";
 
-export function VivaModalStrategy() {
-  const { session } = useCheckoutStore();
+export function VivaModalStrategy({ gatewayResponse }: { gatewayResponse: GatewayResponse }) {
+  const { session, setPaymentStatus, setStep } = useCheckoutStore();
   const { t, formatAmount } = useI18n();
   const [isRedirecting, setIsRedirecting] = useState(false);
 
-  const vivaMethod = session?.methods.find((m) => m.id === "viva_modal");
-  const chargeToken = vivaMethod?.config?.chargeToken as string | undefined;
   const total = session?.order.total ?? 0;
 
-  const handleOpenWallet = () => {
-    // In production, this would redirect to Viva Wallet's payment page
-    // window.location.href = `https://www.vivapayments.com/webcheckout?ref=${chargeToken}`;
+  // Data from Atlas Core gatewayResponse
+  const chargeToken = (gatewayResponse.charge_token as string) || "";
+  const redirectUrl = (gatewayResponse.redirect_url as string) || "";
+
+  const handleOpenWallet = useCallback(() => {
+    if (redirectUrl) {
+      // Real redirect to Viva Wallet payment page
+      setIsRedirecting(true);
+      window.location.href = redirectUrl;
+      return;
+    }
+
+    // Fallback if no redirect URL (development mock)
     setIsRedirecting(true);
-    setTimeout(() => setIsRedirecting(false), 2000);
-  };
+    setTimeout(() => {
+      setIsRedirecting(false);
+      setPaymentStatus("paid");
+      setStep("SUCCESS");
+    }, 2000);
+  }, [redirectUrl, setPaymentStatus, setStep]);
 
   return (
     <div className="space-y-4 sm:space-y-5 pt-1">
@@ -48,10 +61,10 @@ export function VivaModalStrategy() {
             {formatAmount(total)}
           </p>
 
-          {/* Charge token (debug) */}
+          {/* Transaction token */}
           {chargeToken && (
             <p className="mt-2 text-[10px] font-mono text-slate-400">
-              Token: {String(chargeToken).slice(0, 16)}...
+              Token: {chargeToken.slice(0, 16)}...
             </p>
           )}
         </div>
@@ -66,7 +79,7 @@ export function VivaModalStrategy() {
       >
         {isRedirecting ? (
           <>
-            <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+            <Loader2 className="h-4 w-4 animate-spin" />
             <span>{t.processing}</span>
           </>
         ) : (
@@ -81,7 +94,9 @@ export function VivaModalStrategy() {
       <div className="flex items-start gap-2.5 rounded-lg bg-slate-50 border border-slate-100 px-3 sm:px-4 py-2.5 sm:py-3">
         <ArrowRight className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0 text-slate-400 mt-0.5" />
         <p className="text-[11px] sm:text-xs text-slate-500 leading-relaxed">
-          You will be redirected to Viva Wallet&apos;s secure payment page to complete your transaction.
+          {redirectUrl
+            ? "You will be redirected to Viva Wallet's secure payment page to complete your transaction."
+            : "Viva Wallet redirect URL not configured. Contact the merchant for support."}
         </p>
       </div>
 

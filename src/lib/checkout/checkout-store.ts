@@ -1,7 +1,7 @@
 // ─── Atlas Payment Router — Zustand Store ───────────────────────────────────
 
 import { create } from "zustand";
-import type { CheckoutState, PayerFormData, CheckoutStep } from "./types";
+import type { CheckoutState, PayerFormData, CheckoutStep, GatewayResponse } from "./types";
 
 const initialPayerData: PayerFormData = {
   fullName: "",
@@ -26,6 +26,10 @@ export const useCheckoutStore = create<CheckoutState>((set) => ({
   isProcessing: false,
   paymentStatus: null,
 
+  // Gateway (populated after POST /checkout/pay)
+  transactionId: null,
+  gatewayResponse: null,
+
   setSession: (session) => set({ session, isLoading: false, step: "PAYER" }),
   setLoading: (isLoading) => set({ isLoading }),
   setStep: (step) => set({ step, error: null }),
@@ -41,6 +45,10 @@ export const useCheckoutStore = create<CheckoutState>((set) => ({
   setProcessing: (isProcessing) => set({ isProcessing }),
   setPaymentStatus: (paymentStatus) => set({ paymentStatus }),
 
+  setTransactionId: (transactionId) => set({ transactionId }),
+  setGatewayResponse: (gatewayResponse) => set({ gatewayResponse }),
+  clearGatewayResponse: () => set({ gatewayResponse: null, transactionId: null }),
+
   reset: () =>
     set({
       session: null,
@@ -53,5 +61,7 @@ export const useCheckoutStore = create<CheckoutState>((set) => ({
       selectedMethodId: null,
       isProcessing: false,
       paymentStatus: null,
+      transactionId: null,
+      gatewayResponse: null,
     }),
 }));
