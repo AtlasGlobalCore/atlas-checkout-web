@@ -9,7 +9,9 @@ const initialPayerData: PayerFormData = {
   phone: "",
   cpf: "",
   cnpj: "",
+  nif: "",
   address: "",
+  country: "",
 };
 
 export const useCheckoutStore = create<CheckoutState>((set) => ({
@@ -22,11 +24,8 @@ export const useCheckoutStore = create<CheckoutState>((set) => ({
   error: null,
 
   setSession: (session) => set({ session, isLoading: false }),
-
   setLoading: (loading) => set({ isLoading: loading }),
-
   setProcessing: (processing) => set({ isProcessing: processing }),
-
   selectMethod: (methodId) => set({ selectedMethodId: methodId, error: null }),
 
   updatePayerData: (field, value) =>
