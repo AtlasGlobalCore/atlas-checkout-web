@@ -1,26 +1,64 @@
-// ─── Atlas Checkout Types ────────────────────────────────────────────────────
-// Core type definitions for the Smart Checkout system.
+// ─── Atlas Payment Router — Core Types ───────────────────────────────────────
 
-/** Branding configuration loaded from the Headless API */
+// ─── Checkout Steps ─────────────────────────────────────────────────────────
+export type CheckoutStep = "LOADING" | "PAYER" | "METHODS" | "PAYING" | "SUCCESS" | "ERROR";
+
+// ─── Store Branding ─────────────────────────────────────────────────────────
 export interface StoreBranding {
   logoUrl: string;
   storeName: string;
   primaryColor: string;
   accentColor?: string;
-  favicon?: string;
 }
 
-/** A single line item in the order */
+// ─── Order ───────────────────────────────────────────────────────────────────
 export interface OrderLineItem {
   id: string;
   name: string;
   description?: string;
   quantity: number;
-  unitPrice: number; // in cents (smallest currency unit)
+  unitPrice: number; // cents
   imageUrl?: string;
 }
 
-/** Full checkout session returned by the API */
+// ─── Payment Method Types (Router) ──────────────────────────────────────────
+export type PaymentMethodType =
+  | "STRIPE_ELEMENTS"
+  | "PIX_NATIVE"
+  | "VIVA_MODAL"
+  | "SEPA_INSTANT"
+  | "MBWAY_FLOW"
+  | "CRYPTO_NATIVE";
+
+export interface PaymentMethod {
+  id: string;
+  method_type: PaymentMethodType;
+  label: string;
+  description?: string;
+  icon: string;
+  enabled: boolean;
+  config?: Record<string, unknown>;
+}
+
+// ─── Dynamic Payer Fields ───────────────────────────────────────────────────
+export type PayerFieldType =
+  | "text" | "email" | "phone" | "cpf" | "cnpj" | "nif" | "address";
+
+export interface PayerField {
+  id: string;
+  type: PayerFieldType;
+  label: string;
+  placeholder?: string;
+  required: boolean;
+  validation?: {
+    pattern?: string;
+    minLength?: number;
+    maxLength?: number;
+    message?: string;
+  };
+}
+
+// ─── Checkout Session ───────────────────────────────────────────────────────
 export interface CheckoutSession {
   id: string;
   storeSlug: string;
@@ -31,109 +69,81 @@ export interface CheckoutSession {
     title: string;
     description?: string;
     lineItems: OrderLineItem[];
-    subtotal: number; // cents
-    tax: number; // cents
-    discount: number; // cents
-    total: number; // cents
-    currency: string; // ISO 4217 (e.g. "BRL", "USD")
+    subtotal: number;
+    tax: number;
+    discount: number;
+    total: number;
+    currency: string;
   };
   payerFields: PayerField[];
   methods: PaymentMethod[];
-  metadata?: Record<string, string>;
-  expiresAt?: string; // ISO 8601
+  successUrl?: string;
+  cancelUrl?: string;
+  expiresAt?: string;
   status: "active" | "expired" | "completed" | "cancelled";
+  metadata?: Record<string, string>;
 }
 
-/** Dynamic payer data field (Mini-CRM) */
-export type PayerField = {
-  id: string;
-  type:
-    | "text"
-    | "email"
-    | "phone"
-    | "cpf"
-    | "cnpj"
-    | "address"
-    | "number"
-    | "select";
-  label: string;
-  placeholder?: string;
-  required: boolean;
-  validation?: {
-    pattern?: string;
-    minLength?: number;
-    maxLength?: number;
-    message?: string;
-  };
-  options?: { label: string; value: string }[]; // for type "select"
-  dependsOnMethod?: string[]; // only show when these method IDs are selected
-};
-
-/** Payment method definition from the API */
-export type PaymentMethod = {
-  id: string;
-  type:
-    | "credit_card"
-    | "debit_card"
-    | "pix"
-    | "boleto"
-    | "crypto"
-    | "bank_transfer"
-    | "apple_pay"
-    | "google_pay";
-  label: string;
-  description?: string;
-  icon: string; // icon name or URL
-  enabled: boolean;
-  requiresPayerFields?: string[]; // payer field IDs that must be visible
-  config?: Record<string, unknown>;
-};
-
-/** Form data collected from the payer */
+// ─── Payer Form Data ────────────────────────────────────────────────────────
 export interface PayerFormData {
   fullName?: string;
   email?: string;
   phone?: string;
-  cpf?: string;
-  cnpj?: string;
+  document?: string;  // CPF, NIF, etc. — unified field
   address?: string;
+  country?: string;
   [key: string]: string | undefined;
 }
 
-/** Credit card form data */
-export interface CreditCardData {
-  cardNumber: string;
-  cardHolder: string;
-  expiryMonth: string;
-  expiryYear: string;
-  cvv: string;
+// ─── CRM Registration Response ──────────────────────────────────────────────
+export interface CrmRegisterResponse {
+  success: boolean;
+  payerId: string;
+  message?: string;
 }
 
-/** The full payment payload sent to the API */
-export interface PaymentPayload {
+// ─── Payment Status (polling) ───────────────────────────────────────────────
+export type PaymentStatus = "pending" | "processing" | "paid" | "failed" | "expired";
+
+export interface PaymentStatusResponse {
   sessionId: string;
-  methodId: string;
-  payer: PayerFormData;
-  paymentData: CreditCardData | Record<string, unknown>;
+  status: PaymentStatus;
+  successUrl?: string;
 }
 
-/** Checkout store state */
+// ─── Store State ─────────────────────────────────────────────────────────────
 export interface CheckoutState {
+  // Session
   session: CheckoutSession | null;
   isLoading: boolean;
-  isProcessing: boolean;
-  selectedMethodId: string | null;
-  payerData: PayerFormData;
-  paymentData: Record<string, unknown>;
+
+  // Step flow
+  step: CheckoutStep;
   error: string | null;
+
+  // Payer data
+  payerData: PayerFormData;
+  payerId: string | null;
+  isRegistering: boolean;
+
+  // Payment
+  selectedMethodId: string | null;
+  isProcessing: boolean;
+  paymentStatus: PaymentStatus | null;
 
   // Actions
   setSession: (session: CheckoutSession) => void;
-  setLoading: (loading: boolean) => void;
-  setProcessing: (processing: boolean) => void;
-  selectMethod: (methodId: string) => void;
-  updatePayerData: (field: string, value: string) => void;
-  updatePaymentData: (data: Record<string, unknown>) => void;
+  setLoading: (v: boolean) => void;
+  setStep: (step: CheckoutStep) => void;
   setError: (error: string | null) => void;
+
+  updatePayerData: (field: string, value: string) => void;
+  setPayerId: (id: string) => void;
+  setRegistering: (v: boolean) => void;
+
+  selectMethod: (id: string) => void;
+  setProcessing: (v: boolean) => void;
+  setPaymentStatus: (status: PaymentStatus) => void;
+
   reset: () => void;
 }

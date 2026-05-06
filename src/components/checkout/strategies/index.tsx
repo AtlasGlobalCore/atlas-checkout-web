@@ -4,17 +4,25 @@
 "use client";
 
 import type { PaymentMethod } from "@/lib/checkout/types";
-import { CreditCardStrategy } from "./CreditCardStrategy";
-import { PixStrategy } from "./PixStrategy";
-import { CryptoStrategy } from "./CryptoStrategy";
+
+// New strategy components (Task 4)
+import { StripeElementsStrategy } from "./StripeElementsStrategy";
+import { PixNativeStrategy } from "./PixNativeStrategy";
+import { VivaModalStrategy } from "./VivaModalStrategy";
+import { SepaInstantStrategy } from "./SepaInstantStrategy";
+import { MbWayFlowStrategy } from "./MbWayFlowStrategy";
+import { CryptoNativeStrategy } from "./CryptoNativeStrategy";
 
 type StrategyComponent = React.ComponentType<Record<string, never>>;
 
-const strategyMap: Record<string, StrategyComponent> = {
-  credit_card: CreditCardStrategy,
-  debit_card: CreditCardStrategy, // reuse credit card UI
-  pix: PixStrategy,
-  crypto: CryptoStrategy,
+// New method_type → component mapping
+const newStrategyMap: Record<string, StrategyComponent> = {
+  STRIPE_ELEMENTS: StripeElementsStrategy,
+  PIX_NATIVE: PixNativeStrategy,
+  VIVA_MODAL: VivaModalStrategy,
+  SEPA_INSTANT: SepaInstantStrategy,
+  MBWAY_FLOW: MbWayFlowStrategy,
+  CRYPTO_NATIVE: CryptoNativeStrategy,
 };
 
 /**
@@ -22,7 +30,7 @@ const strategyMap: Record<string, StrategyComponent> = {
  * Falls back to a placeholder if the method is not implemented.
  */
 export function getStrategyComponent(method: PaymentMethod): StrategyComponent {
-  return strategyMap[method.type] ?? DefaultStrategy;
+  return newStrategyMap[method.method_type] ?? DefaultStrategy;
 }
 
 /** Placeholder for unimplemented methods */
@@ -45,10 +53,10 @@ function DefaultStrategy() {
         </svg>
       </div>
       <p className="mt-3 text-sm font-medium text-slate-700">
-        Método de pagamento em breve
+        Payment method coming soon
       </p>
       <p className="mt-1 text-xs text-slate-500">
-        Este método será implementado em breve.
+        This method will be available shortly.
       </p>
     </div>
   );

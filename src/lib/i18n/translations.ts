@@ -94,7 +94,38 @@ type TranslationKeys = {
   payWith: string;
   processing: string;
   paymentConfirmed: string;
+  paymentSuccessMessage: string;
+  paymentProcessed: string;
+  redirectToStore: string;
+  goToStore: string;
+  redirectingIn: string;
   selectToContinue: string;
+
+  // Step flow
+  continueToPayment: string;
+  backToDetails: string;
+  yourDataDescription: string;
+
+  // SEPA
+  beneficiary: string;
+  iban: string;
+  bic: string;
+  reference: string;
+  sendByEmail: string;
+  copyIban: string;
+  sepaNote: string;
+
+  // MB WAY
+  mbwayPhoneLabel: string;
+  sendMbwayRequest: string;
+  mbwaySentTitle: string;
+  mbwaySentDescription: string;
+  mbwayConfirming: string;
+  mbwayCancel: string;
+
+  // Viva
+  openVivaWallet: string;
+  vivaRedirectNote: string;
 
   // Language/Currency
   language: string;

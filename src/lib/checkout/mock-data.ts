@@ -1,5 +1,4 @@
-// ─── Mock Checkout Data ──────────────────────────────────────────────────────
-// Simulates the response from the Headless API.
+// ─── Mock Data — Atlas Payment Router ───────────────────────────────────────
 
 import type { CheckoutSession } from "./types";
 
@@ -16,23 +15,10 @@ export const mockCheckoutSession: CheckoutSession = {
   order: {
     id: "ord_001",
     title: "Plano Premium Anual",
-    description:
-      "Acesso completo a todas as funcionalidades da plataforma durante 12 meses.",
+    description: "Acesso completo a todas as funcionalidades da plataforma durante 12 meses.",
     lineItems: [
-      {
-        id: "li_1",
-        name: "TechNova Premium",
-        description: "Assinatura anual",
-        quantity: 1,
-        unitPrice: 29900,
-      },
-      {
-        id: "li_2",
-        name: "Suporte Prioritário",
-        description: "Suporte 24/7 via chat",
-        quantity: 1,
-        unitPrice: 4900,
-      },
+      { id: "li_1", name: "TechNova Premium", description: "Assinatura anual", quantity: 1, unitPrice: 29900 },
+      { id: "li_2", name: "Suporte Prioritário", description: "Suporte 24/7 via chat", quantity: 1, unitPrice: 4900 },
     ],
     subtotal: 34800,
     tax: 0,
@@ -41,95 +27,22 @@ export const mockCheckoutSession: CheckoutSession = {
     currency: "BRL",
   },
   payerFields: [
-    {
-      id: "fullName",
-      type: "text",
-      label: "Nome completo",
-      placeholder: "João da Silva",
-      required: true,
-      validation: {
-        minLength: 3,
-        message: "Nome deve ter pelo menos 3 caracteres",
-      },
-    },
-    {
-      id: "email",
-      type: "email",
-      label: "E-mail",
-      placeholder: "joao@exemplo.com",
-      required: true,
-      validation: {
-        pattern: "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
-        message: "Insira um e-mail válido",
-      },
-    },
-    {
-      id: "cpf",
-      type: "cpf",
-      label: "CPF",
-      placeholder: "000.000.000-00",
-      required: true,
-      dependsOnMethod: ["pix", "boleto", "credit_card"],
-      validation: {
-        pattern: "^\\d{3}\\.?\\d{3}\\.?\\d{3}-?\\d{2}$",
-        message: "CPF inválido",
-      },
-    },
-    {
-      id: "phone",
-      type: "phone",
-      label: "Telefone",
-      placeholder: "(11) 99999-9999",
-      required: false,
-      dependsOnMethod: ["pix"],
-    },
-    {
-      id: "address",
-      type: "address",
-      label: "Endereço de cobrança",
-      placeholder: "Rua, número, bairro, cidade - UF",
-      required: true,
-      dependsOnMethod: ["credit_card"],
-    },
-    {
-      id: "cnpj",
-      type: "cnpj",
-      label: "CNPJ (opcional)",
-      placeholder: "00.000.000/0000-00",
-      required: false,
-      dependsOnMethod: ["boleto"],
-    },
+    { id: "fullName", type: "text", label: "Nome completo", placeholder: "João da Silva", required: true, validation: { minLength: 3, message: "Mínimo 3 caracteres" } },
+    { id: "email", type: "email", label: "E-mail", placeholder: "joao@exemplo.com", required: true, validation: { pattern: "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$", message: "E-mail inválido" } },
+    { id: "phone", type: "phone", label: "Telefone", placeholder: "(11) 99999-9999", required: false },
+    { id: "document", type: "cpf", label: "CPF", placeholder: "000.000.000-00", required: true },
   ],
   methods: [
-    {
-      id: "credit_card",
-      type: "credit_card",
-      label: "Cartão de Crédito",
-      description: "Visa, Mastercard, Amex",
-      icon: "CreditCard",
-      enabled: true,
-    },
-    {
-      id: "pix",
-      type: "pix",
-      label: "PIX",
-      description: "Pagamento instantâneo",
-      icon: "QrCode",
-      enabled: true,
-    },
-    {
-      id: "crypto",
-      type: "crypto",
-      label: "Criptomoeda",
-      description: "Bitcoin, Ethereum, USDT",
-      icon: "Bitcoin",
-      enabled: true,
-    },
+    { id: "stripe_elements", method_type: "STRIPE_ELEMENTS", label: "Cartão de Crédito", description: "Visa, Mastercard, Amex, Apple Pay", icon: "CreditCard", enabled: true, config: { publishableKey: "pk_test_mock" } },
+    { id: "pix_native", method_type: "PIX_NATIVE", label: "PIX", description: "Pagamento instantâneo via QR Code", icon: "QrCode", enabled: true },
+    { id: "viva_modal", method_type: "VIVA_MODAL", label: "Viva Wallet", description: "Cartão ou multibanco", icon: "Wallet", enabled: true },
+    { id: "sepa_instant", method_type: "SEPA_INSTANT", label: "Transferência SEPA", description: "IBAN instantâneo", icon: "Landmark", enabled: true },
+    { id: "mbway_flow", method_type: "MBWAY_FLOW", label: "MB WAY", description: "Pagamento por telemóvel", icon: "Smartphone", enabled: true },
+    { id: "crypto_native", method_type: "CRYPTO_NATIVE", label: "Criptomoeda", description: "Bitcoin, Ethereum, USDT", icon: "Bitcoin", enabled: true },
   ],
-  metadata: {
-    source: "landing_page",
-    campaign: "black_friday_2024",
-  },
+  successUrl: "https://technova.com/obrigado",
+  cancelUrl: "https://technova.com/checkout/cancelado",
   expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
   status: "active",
+  metadata: { source: "landing_page", campaign: "black_friday_2024" },
 };
