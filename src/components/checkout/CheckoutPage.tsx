@@ -1,8 +1,10 @@
 // ─── Atlas Checkout — Main Page (Step-Based Smart Payment Router) ────────────
 // Flow:
-//   Step 1 (PAYER): Customer fills name/email/document + selects payment method
-//   Step 2 (METHODS): Strategy component rendered (card form, QR, etc.)
-//     - For MP_001 cards: tokenizes → sends card payload → gets final gateway response
+//   Step 1 (PAYER): Customer fills name/email/document ONLY (no method selection)
+//     → POST to backend → backend decides payment method → returns methodType + gatewayResponse
+//   Step 2 (METHODS): Strategy component rendered (card form, QR, etc.) based on backend response
+//     - For card methods: renders CreditCardStrategy (agnostic)
+//     - For MP_001 cards: tokenizes via SDK → sends card payload → processes payment
 //   Step 3 (SUCCESS): Animated checkmark → redirect to successUrl
 
 "use client";
@@ -13,47 +15,39 @@ import { useCheckoutStore } from "@/lib/checkout/checkout-store";
 import { useI18n, useDetectLocale, I18nProvider } from "@/lib/i18n";
 import { OrderSummary } from "./OrderSummary";
 import { PayerForm } from "./PayerForm";
-import { PaymentMethodSelector } from "./PaymentMethodSelector";
 import { StrategySwitch } from "./strategies";
-import type { PayResponseBody, CardTokenPayload } from "@/lib/checkout/types";
+import type { PayResponseBody, CardTokenPayload, PaymentMethodType } from "@/lib/checkout/types";
 import { LoadingScreen } from "./LoadingScreen";
 import { LocaleSwitcher } from "./LocaleSwitcher";
 import { SuccessScreen } from "./SuccessScreen";
 
-// ─── Step 1: Payer Data + Method Selection ─────────────────────────────────
+// ─── Step 1: Payer Data ONLY (no method selector) ───────────────────────────
 function StepPayer({ onPaySuccess }: { onPaySuccess: (data: PayResponseBody) => void }) {
   const {
     session,
     payerData,
-    selectedMethodId,
     isRegistering,
     setRegistering,
     setPayerId,
     setTransactionId,
     setGatewayResponse,
+    setResolvedMethod,
     setError,
     setStep,
   } = useCheckoutStore();
   const { t } = useI18n();
 
-  // Validate payer data
+  // Validate payer data only
   const isPayerValid = !!(payerData.fullName && payerData.email && payerData.fullName.length >= 3);
 
-  // Validate method selection
-  const isMethodValid = !!selectedMethodId;
-
-  const isValid = isPayerValid && isMethodValid;
-
-  const selectedMethod = session?.methods.find((m) => m.id === selectedMethodId);
-
   const handleContinue = async () => {
-    if (!isValid || !session || !selectedMethod) return;
+    if (!isPayerValid || !session) return;
 
     setRegistering(true);
     setError(null);
 
     try {
-      // POST to our API → proxies to Atlas Core
+      // POST payer data only — backend decides the payment method
       const res = await fetch("/api/checkout/pay", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -62,8 +56,6 @@ function StepPayer({ onPaySuccess }: { onPaySuccess: (data: PayResponseBody) => 
           storeSlug: session.storeSlug,
           linkId: session.linkId,
           payer: payerData,
-          methodId: selectedMethod.id,
-          methodType: selectedMethod.method_type,
         }),
       });
 
@@ -78,13 +70,19 @@ function StepPayer({ onPaySuccess }: { onPaySuccess: (data: PayResponseBody) => 
         throw new Error(data.error || "Erro ao iniciar pagamento");
       }
 
-      // Store gateway data in Zustand
+      // Store payer + gateway data in Zustand
       if (data.payerId) setPayerId(data.payerId);
       if (data.transactionId) setTransactionId(data.transactionId);
       if (data.gatewayResponse) setGatewayResponse(data.gatewayResponse);
 
-      // For non-card methods, advance directly to METHODS step
-      // For card methods with MP_001, the CreditCardStrategy will tokenize first
+      // Store backend-resolved method info
+      if (data.provider) {
+        const publicKey = (data.providerConfig?.publicKey as string)
+          || (data.gatewayResponse.publishable_key as string)
+          || undefined;
+        setResolvedMethod(data.provider, publicKey);
+      }
+
       onPaySuccess(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : t.unknownError);
@@ -102,29 +100,13 @@ function StepPayer({ onPaySuccess }: { onPaySuccess: (data: PayResponseBody) => 
       </div>
       <PayerForm />
 
-      {/* Divider */}
-      <div className="h-px bg-slate-100" />
-
-      {/* Section: Payment Method Selection */}
-      <div>
-        <h2 className="text-lg font-semibold text-slate-900">{t.paymentMethod}</h2>
-        <p className="mt-1 text-sm text-slate-500">{t.selectToContinue}</p>
-      </div>
-      {session && (
-        <PaymentMethodSelector
-          methods={session.methods}
-          selectedId={selectedMethodId}
-          onSelect={useCheckoutStore.getState().selectMethod}
-        />
-      )}
-
       {/* Submit Button */}
       <button
         type="button"
         onClick={handleContinue}
-        disabled={!isValid || isRegistering}
+        disabled={!isPayerValid || isRegistering}
         className={`flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3.5 text-sm font-semibold transition-all min-h-[48px] ${
-          isValid && !isRegistering
+          isPayerValid && !isRegistering
             ? "bg-slate-900 text-white shadow-lg shadow-slate-900/20 hover:bg-slate-800 active:scale-[0.98]"
             : "cursor-not-allowed bg-slate-200 text-slate-400"
         }`}
@@ -136,7 +118,7 @@ function StepPayer({ onPaySuccess }: { onPaySuccess: (data: PayResponseBody) => 
           </>
         ) : (
           <>
-            {t.continueToPayment}
+            <span>{t.payWith}</span>
             <ArrowRight className="h-4 w-4" />
           </>
         )}
@@ -145,18 +127,21 @@ function StepPayer({ onPaySuccess }: { onPaySuccess: (data: PayResponseBody) => 
   );
 }
 
-// ─── Step 2: Payment Strategy (rendered AFTER gatewayResponse is available) ──
+// ─── Step 2: Payment Strategy (rendered AFTER backend response) ─────────────
 function StepPayment() {
-  const { session, selectedMethodId, gatewayResponse, setStep, isProcessing, setProcessing, setError } = useCheckoutStore();
+  const { session, resolvedProvider, resolvedPublicKey, gatewayResponse, setStep, isProcessing, setProcessing, setError } = useCheckoutStore();
   const { t } = useI18n();
 
-  const selectedMethod = session?.methods.find((m) => m.id === selectedMethodId);
-  const provider = selectedMethod?.provider || "";
-  const publicKey = (selectedMethod?.config?.publicKey as string) || (gatewayResponse?.publishable_key as string) || undefined;
+  // The method type comes from the backend response
+  const methodType: PaymentMethodType | undefined = session ? (session.methods.find(
+    (m) => m.provider === resolvedProvider && m.enabled
+  )?.method_type) : undefined;
 
-  // ─── Handle card tokenization (MP_001) ────────────────────────────────
+  const publicKey = resolvedPublicKey || (gatewayResponse?.publishable_key as string) || undefined;
+
+  // ─── Handle card tokenization (MP_001 or other card providers) ──────────
   const handleCardToken = useCallback(async (cardPayload: CardTokenPayload) => {
-    if (!session || !selectedMethod) return;
+    if (!session) return;
 
     setProcessing(true);
     setError(null);
@@ -171,8 +156,7 @@ function StepPayment() {
           storeSlug: session.storeSlug,
           linkId: session.linkId,
           payer: useCheckoutStore.getState().payerData,
-          methodId: selectedMethod.id,
-          methodType: selectedMethod.method_type,
+          methodType: cardPayload.provider === "MP_001" ? "STRIPE_ELEMENTS" as PaymentMethodType : undefined,
           cardPayload,
         }),
       });
@@ -201,9 +185,12 @@ function StepPayment() {
     } finally {
       setProcessing(false);
     }
-  }, [session, selectedMethod, setProcessing, setError, setStep, t]);
+  }, [session, setProcessing, setError, setStep, t]);
 
-  if (!session || !gatewayResponse) return null;
+  if (!session || !gatewayResponse || !methodType) return null;
+
+  // Find the method label from session for display
+  const activeMethod = session.methods.find((m) => m.provider === resolvedProvider && m.enabled);
 
   return (
     <div className="space-y-6">
@@ -217,19 +204,21 @@ function StepPayment() {
         {t.backToDetails}
       </button>
 
-      {/* Selected method label */}
-      <div className="flex items-center gap-2 text-sm text-slate-600">
-        <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">
-          {t.paymentMethod}
-        </span>
-        <span className="text-slate-300">·</span>
-        <span className="font-semibold text-slate-900">{selectedMethod?.label}</span>
-      </div>
+      {/* Backend-resolved method label */}
+      {activeMethod && (
+        <div className="flex items-center gap-2 text-sm text-slate-600">
+          <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+            {t.paymentMethod}
+          </span>
+          <span className="text-slate-300">·</span>
+          <span className="font-semibold text-slate-900">{activeMethod.label}</span>
+        </div>
+      )}
 
       {/* Strategy component — provider-aware routing */}
       <StrategySwitch
-        methodType={selectedMethod?.method_type}
-        provider={provider}
+        methodType={methodType}
+        provider={resolvedProvider || undefined}
         publicKey={publicKey}
         gatewayResponse={gatewayResponse}
         onSubmitCardToken={handleCardToken}

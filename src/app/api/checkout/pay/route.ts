@@ -3,7 +3,7 @@
 // Proxies to Atlas Core: POST {ATLAS_CORE_API_URL}/api/public/checkout/{storeSlug}/{linkId}/pay
 //
 // Two modes:
-//   1. Initial payment → Atlas Core returns gatewayResponse for strategy rendering
+//   1. Initial payment (no methodId) → Atlas Core decides method, returns gatewayResponse
 //   2. Card token payload (cardPayload present) → Atlas Core processes the tokenized payment
 
 import { NextResponse } from "next/server";
@@ -71,30 +71,22 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!methodId || !methodType) {
-      return NextResponse.json(
-        { error: "methodId and methodType are required" },
-        { status: 400 }
-      );
-    }
-
     // ─── Real S2S call to Atlas Core ─────────────────────────────────────────
     const atlasCoreUrl = process.env.ATLAS_CORE_API_URL;
 
     if (atlasCoreUrl) {
       const coreEndpoint = `${atlasCoreUrl.replace(/\/+$/, "")}/api/public/checkout/${encodeURIComponent(storeSlug)}/${encodeURIComponent(linkId)}/pay`;
 
-      // Build the payload — include cardPayload if present (MP_001 tokenization)
+      // Build the payload — backend decides method if methodId is not sent
       const corePayload: Record<string, unknown> = {
         sessionId,
         payer,
-        methodId,
-        methodType,
       };
 
-      if (cardPayload) {
-        corePayload.cardPayload = cardPayload;
-      }
+      // Include methodId/methodType only if the client explicitly sent them
+      if (methodId) corePayload.methodId = methodId;
+      if (methodType) corePayload.methodType = methodType;
+      if (cardPayload) corePayload.cardPayload = cardPayload;
 
       const coreResponse = await fetch(coreEndpoint, {
         method: "POST",
@@ -124,7 +116,9 @@ export async function POST(request: Request) {
         success: true,
         transactionId: coreData.transactionId || `txn_${Date.now()}`,
         payerId: coreData.payerId,
-        methodType,
+        methodType: coreData.methodType,
+        provider: coreData.provider,
+        providerConfig: coreData.providerConfig,
         gatewayResponse: coreData.gatewayResponse || {},
         message: coreData.message,
       };
@@ -141,7 +135,8 @@ export async function POST(request: Request) {
         success: true,
         transactionId: `txn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         payerId: `payer_${Date.now()}`,
-        methodType,
+        methodType: methodType || ("STRIPE_ELEMENTS" as const),
+        provider: cardPayload.provider,
         gatewayResponse: {
           status: "approved",
           status_detail: "accredited",
@@ -153,13 +148,26 @@ export async function POST(request: Request) {
       return NextResponse.json(responseBody);
     }
 
-    const mockGateway = getMockGatewayResponse(methodType);
+    // ─── Mock: Backend decides the payment method ──────────────────────────
+    // Simulates Atlas Core routing logic. In production, this decision
+    // is made by the backend based on routing rules, risk analysis, etc.
+    const mockMethodType = methodType || ("STRIPE_ELEMENTS" as const);
+    const mockProvider = "MP_001";
+    const mockMethodId = "mp_card";
+    const mockProviderConfig = {
+      publicKey: "APP_USR-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    };
+
+    const mockGateway = getMockGatewayResponse(mockMethodType);
 
     const responseBody: PayResponseBody = {
       success: true,
       transactionId: `txn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       payerId: `payer_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      methodType,
+      methodType: mockMethodType,
+      methodId: mockMethodId,
+      provider: mockProvider,
+      providerConfig: mockProviderConfig,
       gatewayResponse: mockGateway,
       message: "Payer registered and payment initiated (mock)",
     };

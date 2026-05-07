@@ -155,8 +155,8 @@ export interface PayRequestBody {
   storeSlug: string;
   linkId: string;
   payer: PayerFormData;
-  methodId: string;
-  methodType: PaymentMethodType;
+  methodId?: string;                // Optional — backend decides if not sent
+  methodType?: PaymentMethodType;   // Optional — backend decides if not sent
   cardPayload?: CardTokenPayload;   // Only for card tokenization (e.g. MP_001)
 }
 
@@ -166,6 +166,8 @@ export interface PayResponseBody {
   transactionId: string;
   payerId?: string;
   methodType: PaymentMethodType;
+  provider?: string;                    // Backend-selected provider (e.g. "MP_001")
+  providerConfig?: Record<string, unknown>; // Provider-specific config (e.g. { publicKey: "APP_USR-xxx" })
   gatewayResponse: GatewayResponse;
   message?: string;
 }
@@ -219,6 +221,10 @@ export interface CheckoutState {
   mpReady: boolean;
   initMercadoPago: (publicKey: string) => Promise<void>;
 
+  // Backend-resolved method (after POST /checkout/pay)
+  resolvedProvider: string | null;
+  resolvedPublicKey: string | null;
+
   // Actions
   setSession: (session: CheckoutSession) => void;
   setLoading: (v: boolean) => void;
@@ -230,13 +236,13 @@ export interface CheckoutState {
   setRegistering: (v: boolean) => void;
 
   updatePaymentData: (data: Record<string, string>) => void;
-  selectMethod: (id: string) => void;
   setProcessing: (v: boolean) => void;
   setPaymentStatus: (status: PaymentStatus) => void;
 
   setTransactionId: (id: string) => void;
   setGatewayResponse: (response: GatewayResponse) => void;
   clearGatewayResponse: () => void;
+  setResolvedMethod: (provider: string, publicKey?: string) => void;
 
   reset: () => void;
 }

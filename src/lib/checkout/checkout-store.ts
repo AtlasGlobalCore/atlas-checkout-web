@@ -24,6 +24,8 @@ export const useCheckoutStore = create<CheckoutState>((set, get) => ({
   isRegistering: false,
 
   selectedMethodId: null,
+  resolvedProvider: null,
+  resolvedPublicKey: null,
   isProcessing: false,
   paymentStatus: null,
 
@@ -55,6 +57,7 @@ export const useCheckoutStore = create<CheckoutState>((set, get) => ({
     set((state) => ({ paymentData: { ...state.paymentData, ...data } })),
 
   selectMethod: (id) => set({ selectedMethodId: id, error: null }),
+  setResolvedMethod: (provider, publicKey) => set({ resolvedProvider: provider, resolvedPublicKey: publicKey || null }),
   setProcessing: (isProcessing) => set({ isProcessing }),
   setPaymentStatus: (paymentStatus) => set({ paymentStatus }),
 
@@ -90,6 +93,8 @@ export const useCheckoutStore = create<CheckoutState>((set, get) => ({
       payerId: null,
       isRegistering: false,
       selectedMethodId: null,
+      resolvedProvider: null,
+      resolvedPublicKey: null,
       isProcessing: false,
       paymentStatus: null,
       paymentData: {},
