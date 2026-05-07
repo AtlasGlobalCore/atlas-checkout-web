@@ -33,11 +33,12 @@ export type PaymentMethodType =
 export interface PaymentMethod {
   id: string;
   method_type: PaymentMethodType;
+  provider: string;               // e.g. "MP_001", "STRIPE_001", "PICPAY_001"
   label: string;
   description?: string;
   icon: string;
   enabled: boolean;
-  config?: Record<string, unknown>;
+  config?: Record<string, unknown>; // provider-specific (publicKey, etc.)
 }
 
 // ─── Dynamic Payer Fields ───────────────────────────────────────────────────
@@ -138,6 +139,16 @@ export interface GatewayResponse {
   [key: string]: unknown;
 }
 
+// ─── Card Token Payload (sent after MP_001 tokenization) ────────────────────
+export interface CardTokenPayload {
+  method: "card";
+  provider: string;                 // "MP_001"
+  token: string;                    // SDK-generated card token
+  installments: number;
+  issuer_id: string | null;         // Bank identifier from MP SDK
+  payment_method_id: string;        // "visa", "mastercard", "amex", etc.
+}
+
 // ─── Pay Request Body (Client → our API) ────────────────────────────────────
 export interface PayRequestBody {
   sessionId: string;
@@ -146,6 +157,7 @@ export interface PayRequestBody {
   payer: PayerFormData;
   methodId: string;
   methodType: PaymentMethodType;
+  cardPayload?: CardTokenPayload;   // Only for card tokenization (e.g. MP_001)
 }
 
 // ─── Pay Response (Atlas Core → our API → Client) ───────────────────────────
@@ -172,7 +184,10 @@ export interface StrategyProps {
   gatewayResponse: GatewayResponse;
 }
 
-// ─── Store State ─────────────────────────────────────────────────────────────
+// ─── Mercado Pago SDK Instance (typed loosely to avoid bundling) ────────────
+type MercadopagoInstance = unknown;
+
+// ─── Store State ────────────────────────────────────────────────────────────
 export interface CheckoutState {
   // Session
   session: CheckoutSession | null;
@@ -192,9 +207,17 @@ export interface CheckoutState {
   isProcessing: boolean;
   paymentStatus: PaymentStatus | null;
 
+  // Card form data (collected before tokenization)
+  paymentData: Record<string, string>;
+
   // Gateway (after POST /checkout/pay)
   transactionId: string | null;
   gatewayResponse: GatewayResponse | null;
+
+  // Mercado Pago SDK
+  mpInstance: MercadopagoInstance | null;
+  mpReady: boolean;
+  initMercadoPago: (publicKey: string) => Promise<void>;
 
   // Actions
   setSession: (session: CheckoutSession) => void;
@@ -206,6 +229,7 @@ export interface CheckoutState {
   setPayerId: (id: string) => void;
   setRegistering: (v: boolean) => void;
 
+  updatePaymentData: (data: Record<string, string>) => void;
   selectMethod: (id: string) => void;
   setProcessing: (v: boolean) => void;
   setPaymentStatus: (status: PaymentStatus) => void;

@@ -74,3 +74,27 @@ Stage Summary:
 - Stripe uses dynamic loadStripe() with no frontend env vars — publishable_key comes exclusively from API
 - Zero lint errors, dev server verified (GET / 200)
 - Environment variables: ATLAS_CORE_API_URL, ATLAS_CORE_API_KEY (optional, for Bearer auth)
+
+---
+Task ID: 8
+Agent: main
+Task: Integrate MP_001 (Mercado Pago) node — agnostic checkout with silent SDK loader
+
+Work Log:
+- Updated types.ts — Added `provider` field to PaymentMethod (e.g. "MP_001", "STRIPE_001", "PICPAY_001"); added CardTokenPayload interface (method, provider, token, installments, issuer_id, payment_method_id); added cardPayload optional field to PayRequestBody; added MercadopagoInstance type, mpInstance/mpReady/initMercadoPago + paymentData/updatePaymentData to CheckoutState
+- Created mp-loader.ts — Silent SDK loader: loadMercadoPagoSdk() loads https://sdk.mercadopago.com/js/v2 into DOM (singleton promise, safe to call multiple times); createMercadoPagoInstance(publicKey) creates SDK instance with pt-BR locale; no bundling, typed without any
+- Updated checkout-store.ts — Added paymentData: Record<string, string> for card form state; added mpInstance/mpReady state; added initMercadoPago action (loads SDK + creates instance); added updatePaymentData action; reset clears all MP state
+- Rewrote CreditCardStrategy.tsx — 100% agnostic card form: zero provider branding/logos; accepts provider + publicKey + onSubmitToken props; if provider === "MP_001": silently loads MP SDK via initMercadoPago, on submit calls mp.createCardToken() with card data + CPF identification, detects payment_method_id from BIN via mp.getPaymentMethods(), returns CardTokenPayload; if generic provider: returns raw card data; includes installments selector (1-12x) only for MP_001; card preview with brand color detection; CVV show/hide toggle; tokenization error display; Pay button with processing state; security notice
+- Updated strategies/index.tsx — StrategySwitch now passes provider, publicKey, onSubmitCardToken to CreditCardStrategy; STRIPE_ELEMENTS method type routes to agnostic CreditCardStrategy (not StripeElementsStrategy); other methods use standard gatewayResponse flow
+- Updated CheckoutPage.tsx — StepPayment now handles card tokenization: receives handleCardToken callback that POSTs cardPayload to /api/checkout/pay; extracted selectedMethod/provider/publicKey before early return to avoid React hooks rule violation; passes provider + publicKey to StrategySwitch
+- Updated mock-data.ts — Card method now uses provider: "MP_001" with config.publicKey; PIX uses "PICPAY_001"; all methods have explicit provider field
+- Updated /api/checkout/pay/route.ts — Two modes: (1) initial payment returns gatewayResponse, (2) with cardPayload present, forwards token to Atlas Core for processing; mock fallback returns "approved" when cardPayload is present
+- PayerForm.tsx — Already has document (CPF) field for BR, which serves as MP_001 identification
+
+Stage Summary:
+- MP_001 integrated as first provider node in the agnostic checkout router
+- SDK loaded silently only when a card method with provider MP_001 is active
+- CreditCardStrategy is 100% provider-agnostic — zero Mercado Pago branding
+- Tokenization flow: card form → mp.createCardToken() → CardTokenPayload → POST /api/checkout/pay → Atlas Core
+- PIX is never associated with MP_001 in the frontend — only PICPAY_001 or other providers handle PIX
+- Zero lint errors, dev server verified

@@ -1,7 +1,10 @@
 // ─── CRM Registration + Payment Initiation API (S2S Proxy) ────────────────────
 // POST /api/checkout/pay
 // Proxies to Atlas Core: POST {ATLAS_CORE_API_URL}/api/public/checkout/{storeSlug}/{linkId}/pay
-// Returns: { transactionId, gatewayResponse: { client_secret, publishable_key, qr_code, ... } }
+//
+// Two modes:
+//   1. Initial payment → Atlas Core returns gatewayResponse for strategy rendering
+//   2. Card token payload (cardPayload present) → Atlas Core processes the tokenized payment
 
 import { NextResponse } from "next/server";
 import type { PayRequestBody, PayResponseBody } from "@/lib/checkout/types";
@@ -52,7 +55,7 @@ function getMockGatewayResponse(methodType: string) {
 export async function POST(request: Request) {
   try {
     const body: PayRequestBody = await request.json();
-    const { sessionId, storeSlug, linkId, payer, methodId, methodType } = body;
+    const { sessionId, storeSlug, linkId, payer, methodId, methodType, cardPayload } = body;
 
     if (!sessionId || !storeSlug || !linkId) {
       return NextResponse.json(
@@ -79,24 +82,29 @@ export async function POST(request: Request) {
     const atlasCoreUrl = process.env.ATLAS_CORE_API_URL;
 
     if (atlasCoreUrl) {
-      // Production: forward request to Atlas Core
       const coreEndpoint = `${atlasCoreUrl.replace(/\/+$/, "")}/api/public/checkout/${encodeURIComponent(storeSlug)}/${encodeURIComponent(linkId)}/pay`;
+
+      // Build the payload — include cardPayload if present (MP_001 tokenization)
+      const corePayload: Record<string, unknown> = {
+        sessionId,
+        payer,
+        methodId,
+        methodType,
+      };
+
+      if (cardPayload) {
+        corePayload.cardPayload = cardPayload;
+      }
 
       const coreResponse = await fetch(coreEndpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          // Forward any auth header if configured
           ...(process.env.ATLAS_CORE_API_KEY
             ? { Authorization: `Bearer ${process.env.ATLAS_CORE_API_KEY}` }
             : {}),
         },
-        body: JSON.stringify({
-          sessionId,
-          payer,
-          methodId,
-          methodType,
-        }),
+        body: JSON.stringify(corePayload),
       });
 
       if (!coreResponse.ok) {
@@ -112,7 +120,6 @@ export async function POST(request: Request) {
 
       const coreData = await coreResponse.json();
 
-      // Atlas Core is expected to return: { transactionId, gatewayResponse: { ... } }
       const responseBody: PayResponseBody = {
         success: true,
         transactionId: coreData.transactionId || `txn_${Date.now()}`,
@@ -127,6 +134,24 @@ export async function POST(request: Request) {
 
     // ─── Mock fallback (development) ────────────────────────────────────────
     await new Promise((resolve) => setTimeout(resolve, 600));
+
+    // If cardPayload is present (MP_001 tokenized card), simulate success
+    if (cardPayload) {
+      const responseBody: PayResponseBody = {
+        success: true,
+        transactionId: `txn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        payerId: `payer_${Date.now()}`,
+        methodType,
+        gatewayResponse: {
+          status: "approved",
+          status_detail: "accredited",
+          card_token: cardPayload.token,
+        },
+        message: "Pagamento aprovado (mock)",
+      };
+
+      return NextResponse.json(responseBody);
+    }
 
     const mockGateway = getMockGatewayResponse(methodType);
 

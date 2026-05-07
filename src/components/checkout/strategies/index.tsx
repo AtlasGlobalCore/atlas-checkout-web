@@ -1,21 +1,31 @@
 // ─── Strategy Registry & Switch ──────────────────────────────────────────────
 // Maps payment method types to their strategy components (Strategy Pattern).
-// Every strategy receives gatewayResponse as a prop from the Atlas Core API.
+// Every strategy receives gatewayResponse and optional provider info.
 
 "use client";
 
-import type { PaymentMethodType, GatewayResponse } from "@/lib/checkout/types";
+import type { PaymentMethodType, GatewayResponse, CardTokenPayload } from "@/lib/checkout/types";
 
 import { StripeElementsStrategy } from "./StripeElementsStrategy";
+import { CreditCardStrategy } from "./CreditCardStrategy";
 import { PixNativeStrategy } from "./PixNativeStrategy";
 import { VivaModalStrategy } from "./VivaModalStrategy";
 import { SepaInstantStrategy } from "./SepaInstantStrategy";
 import { MbWayFlowStrategy } from "./MbWayFlowStrategy";
 import { CryptoNativeStrategy } from "./CryptoNativeStrategy";
 
-type StrategyComponent = React.ComponentType<{ gatewayResponse: GatewayResponse }>;
+// Standard strategies receive gatewayResponse from Atlas Core
+type StandardStrategy = React.ComponentType<{ gatewayResponse: GatewayResponse }>;
 
-const strategyMap: Record<string, StrategyComponent> = {
+// Credit card strategy also receives provider config + token callback
+type CardStrategy = React.ComponentType<{
+  provider: string;
+  publicKey?: string;
+  gatewayResponse?: Record<string, unknown>;
+  onSubmitToken?: (payload: CardTokenPayload) => void;
+}>;
+
+const standardStrategyMap: Record<string, StandardStrategy> = {
   STRIPE_ELEMENTS: StripeElementsStrategy,
   PIX_NATIVE: PixNativeStrategy,
   VIVA_MODAL: VivaModalStrategy,
@@ -25,29 +35,43 @@ const strategyMap: Record<string, StrategyComponent> = {
 };
 
 /**
- * StrategySwitch — renders the correct strategy component based on methodType.
- * gatewayResponse is injected from the POST /checkout/pay response.
+ * StrategySwitch — renders the correct strategy based on methodType + provider.
+ *
+ * Credit card methods route to CreditCardStrategy (agnostic).
+ * All other methods use their standard strategy with gatewayResponse.
  */
 export function StrategySwitch({
   methodType,
+  provider,
+  publicKey,
   gatewayResponse,
+  onSubmitCardToken,
 }: {
   methodType?: PaymentMethodType;
+  provider?: string;
+  publicKey?: string;
   gatewayResponse: GatewayResponse;
+  onSubmitCardToken?: (payload: CardTokenPayload) => void;
 }) {
   if (!methodType) return null;
 
-  const Component = strategyMap[methodType];
+  // Credit card methods → use agnostic CreditCardStrategy
+  if (methodType === "STRIPE_ELEMENTS") {
+    const CardComp = CreditCardStrategy as CardStrategy;
+    return (
+      <CardComp
+        provider={provider || "STRIPE_001"}
+        publicKey={publicKey || (gatewayResponse.publishable_key as string)}
+        gatewayResponse={gatewayResponse}
+        onSubmitToken={onSubmitCardToken}
+      />
+    );
+  }
+
+  const Component = standardStrategyMap[methodType];
   if (!Component) return <DefaultStrategy />;
 
   return <Component gatewayResponse={gatewayResponse} />;
-}
-
-/**
- * Returns the strategy component class for a given method_type.
- */
-export function getStrategyComponent(methodType: PaymentMethodType): StrategyComponent {
-  return strategyMap[methodType] ?? DefaultStrategy;
 }
 
 /** Placeholder for unimplemented methods */

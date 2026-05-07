@@ -1,8 +1,8 @@
 // ─── Atlas Checkout — Main Page (Step-Based Smart Payment Router) ────────────
 // Flow:
 //   Step 1 (PAYER): Customer fills name/email/document + selects payment method
-//   POST /api/checkout/pay → Atlas Core → { transactionId, gatewayResponse }
-//   Step 2 (METHODS): Strategy component rendered with gatewayResponse injected
+//   Step 2 (METHODS): Strategy component rendered (card form, QR, etc.)
+//     - For MP_001 cards: tokenizes → sends card payload → gets final gateway response
 //   Step 3 (SUCCESS): Animated checkmark → redirect to successUrl
 
 "use client";
@@ -15,7 +15,7 @@ import { OrderSummary } from "./OrderSummary";
 import { PayerForm } from "./PayerForm";
 import { PaymentMethodSelector } from "./PaymentMethodSelector";
 import { StrategySwitch } from "./strategies";
-import type { PayResponseBody } from "@/lib/checkout/types";
+import type { PayResponseBody, CardTokenPayload } from "@/lib/checkout/types";
 import { LoadingScreen } from "./LoadingScreen";
 import { LocaleSwitcher } from "./LocaleSwitcher";
 import { SuccessScreen } from "./SuccessScreen";
@@ -83,7 +83,8 @@ function StepPayer({ onPaySuccess }: { onPaySuccess: (data: PayResponseBody) => 
       if (data.transactionId) setTransactionId(data.transactionId);
       if (data.gatewayResponse) setGatewayResponse(data.gatewayResponse);
 
-      // Advance to payment method step
+      // For non-card methods, advance directly to METHODS step
+      // For card methods with MP_001, the CreditCardStrategy will tokenize first
       onPaySuccess(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : t.unknownError);
@@ -146,12 +147,63 @@ function StepPayer({ onPaySuccess }: { onPaySuccess: (data: PayResponseBody) => 
 
 // ─── Step 2: Payment Strategy (rendered AFTER gatewayResponse is available) ──
 function StepPayment() {
-  const { session, selectedMethodId, gatewayResponse, setStep } = useCheckoutStore();
+  const { session, selectedMethodId, gatewayResponse, setStep, isProcessing, setProcessing, setError } = useCheckoutStore();
   const { t } = useI18n();
 
-  if (!session || !gatewayResponse) return null;
+  const selectedMethod = session?.methods.find((m) => m.id === selectedMethodId);
+  const provider = selectedMethod?.provider || "";
+  const publicKey = (selectedMethod?.config?.publicKey as string) || (gatewayResponse?.publishable_key as string) || undefined;
 
-  const selectedMethod = session.methods.find((m) => m.id === selectedMethodId);
+  // ─── Handle card tokenization (MP_001) ────────────────────────────────
+  const handleCardToken = useCallback(async (cardPayload: CardTokenPayload) => {
+    if (!session || !selectedMethod) return;
+
+    setProcessing(true);
+    setError(null);
+
+    try {
+      // POST card token to our API → Atlas Core processes payment
+      const res = await fetch("/api/checkout/pay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: session.id,
+          storeSlug: session.storeSlug,
+          linkId: session.linkId,
+          payer: useCheckoutStore.getState().payerData,
+          methodId: selectedMethod.id,
+          methodType: selectedMethod.method_type,
+          cardPayload,
+        }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || "Erro ao processar pagamento");
+      }
+
+      const data: PayResponseBody = await res.json();
+
+      if (!data.success) {
+        throw new Error(data.error || "Erro ao processar pagamento");
+      }
+
+      if (data.transactionId) {
+        useCheckoutStore.getState().setTransactionId(data.transactionId);
+      }
+      if (data.gatewayResponse) {
+        useCheckoutStore.getState().setGatewayResponse(data.gatewayResponse);
+      }
+
+      setStep("SUCCESS");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t.unknownError);
+    } finally {
+      setProcessing(false);
+    }
+  }, [session, selectedMethod, setProcessing, setError, setStep, t]);
+
+  if (!session || !gatewayResponse) return null;
 
   return (
     <div className="space-y-6">
@@ -174,8 +226,14 @@ function StepPayment() {
         <span className="font-semibold text-slate-900">{selectedMethod?.label}</span>
       </div>
 
-      {/* Strategy component — gatewayResponse injected */}
-      <StrategySwitch methodType={selectedMethod?.method_type} gatewayResponse={gatewayResponse} />
+      {/* Strategy component — provider-aware routing */}
+      <StrategySwitch
+        methodType={selectedMethod?.method_type}
+        provider={provider}
+        publicKey={publicKey}
+        gatewayResponse={gatewayResponse}
+        onSubmitCardToken={handleCardToken}
+      />
     </div>
   );
 }
