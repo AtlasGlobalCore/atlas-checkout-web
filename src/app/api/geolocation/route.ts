@@ -1,7 +1,7 @@
 // ─── IP Geolocation API ─────────────────────────────────────────────────────
 // GET /api/geolocation
 // Detects the user's IP and returns country code for locale/currency auto-detection.
-// Uses multiple free geolocation APIs as fallbacks.
+// Uses HTTPS-only geolocation providers with graceful fallback.
 
 import { NextResponse } from "next/server";
 
@@ -18,15 +18,28 @@ async function detectViaHeaders(request: Request): Promise<GeoResult> {
 
   if (!ip) return {};
 
-  // Try ip-api.com (free, no key needed)
+  // Provider 1: ip-api.com (HTTPS endpoint)
   try {
-    const res = await fetch(`http://ip-api.com/json/${ip}?fields=countryCode,status`, {
+    const res = await fetch(`https://pro.ip-api.com/json/${ip}?fields=countryCode,status&key=demo`, {
       signal: AbortSignal.timeout(3000),
     });
     if (res.ok) {
       const data = await res.json();
-      if (data.status === "success") {
+      if (data.status === "success" && data.countryCode) {
         return { country: data.countryCode, ip };
+      }
+    }
+  } catch { /* try next */ }
+
+  // Provider 2: ipwho.is (HTTPS, free, no key needed)
+  try {
+    const res = await fetch(`https://ipwho.is/${ip}`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && data.country_code) {
+        return { country: data.country_code, ip };
       }
     }
   } catch { /* try next */ }

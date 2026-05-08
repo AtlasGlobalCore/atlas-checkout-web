@@ -98,3 +98,28 @@ Stage Summary:
 - Tokenization flow: card form → mp.createCardToken() → CardTokenPayload → POST /api/checkout/pay → Atlas Core
 - PIX is never associated with MP_001 in the frontend — only PICPAY_001 or other providers handle PIX
 - Zero lint errors, dev server verified
+
+---
+Task ID: hardening
+Agent: main
+Task: Harden FE/BE integration — type contracts, proxy robustness, status polling, geolocation fix
+
+Work Log:
+- Analyzed GPT audit report (7 findings) — validated each point against actual codebase
+- Lint check: `react-hooks/set-state-in-effect` rule NOT active in eslint.config.mjs — already clean
+- types.ts: Created union type `PayResponseBody = PayResponseSuccess | PayResponseError` with `code` field for machine-readable errors; added `ResolvedMethod` interface consolidating methodType + provider + publicKey
+- checkout-store.ts: Replaced `resolvedProvider`/`resolvedPublicKey` with single `resolvedMethod: ResolvedMethod | null`; updated `setResolvedMethod` to accept `ResolvedMethod`
+- CheckoutPage.tsx: StepPayment uses `resolvedMethod.methodType` as primary source, fallback to session.methods match; added fallback UI with `TriangleAlert` when methodType cannot be resolved (no blank screen); proper type narrowing on `data.success`; dev-only console.warn for provider mismatch diagnostics; `safeParseJson` helper for robust response parsing
+- /api/checkout/pay/route.ts: Added AbortController with 12s timeout; 1 retry on network/5xx errors (no retry on 4xx); `x-correlation-id` generated and forwarded; payer data stripped to only essential fields; structured error responses with `code` field; 504 on timeout, 502 on backend failure
+- /api/checkout/status/route.ts: Implemented real S2S proxy to Atlas Core (`/api/public/checkout/{sessionId}/status`); status mapping from 12+ backend statuses to 5 frontend statuses; 8s timeout; graceful degradation returns `pending` on network failure; forwards correlation-id
+- /api/geolocation/route.ts: Replaced `http://ip-api.com` with HTTPS providers (`pro.ip-api.com` + `ipwho.is`); 3s timeout per provider; cascading fallback chain
+- README.md: Full rewrite reflecting backend-driven architecture, union types, hardening features, env vars
+
+Stage Summary:
+- PayResponseBody is now a discriminated union forcing type narrowing at every call site
+- Proxy endpoints have timeout + retry + correlation-id + structured error mapping
+- StepPayment never renders blank screen — shows friendly error with retry on provider mismatch
+- Status polling proxy is production-ready with real Atlas Core integration
+- Geolocation uses HTTPS-only providers
+- Zero lint errors, dev server verified (all endpoints 200)
+- 7 files changed across types, store, page, 3 API routes, README

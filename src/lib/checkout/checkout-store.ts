@@ -1,7 +1,7 @@
 // ─── Atlas Payment Router — Zustand Store ───────────────────────────────────
 
 import { create } from "zustand";
-import type { CheckoutState, PayerFormData, CheckoutStep, GatewayResponse } from "./types";
+import type { CheckoutState, PayerFormData, CheckoutStep, GatewayResponse, ResolvedMethod } from "./types";
 import { loadMercadoPagoSdk, createMercadoPagoInstance } from "./mp-loader";
 
 const initialPayerData: PayerFormData = {
@@ -24,8 +24,7 @@ export const useCheckoutStore = create<CheckoutState>((set, get) => ({
   isRegistering: false,
 
   selectedMethodId: null,
-  resolvedProvider: null,
-  resolvedPublicKey: null,
+  resolvedMethod: null,
   isProcessing: false,
   paymentStatus: null,
 
@@ -57,7 +56,7 @@ export const useCheckoutStore = create<CheckoutState>((set, get) => ({
     set((state) => ({ paymentData: { ...state.paymentData, ...data } })),
 
   selectMethod: (id) => set({ selectedMethodId: id, error: null }),
-  setResolvedMethod: (provider, publicKey) => set({ resolvedProvider: provider, resolvedPublicKey: publicKey || null }),
+  setResolvedMethod: (method: ResolvedMethod) => set({ resolvedMethod: method }),
   setProcessing: (isProcessing) => set({ isProcessing }),
   setPaymentStatus: (paymentStatus) => set({ paymentStatus }),
 
@@ -93,8 +92,7 @@ export const useCheckoutStore = create<CheckoutState>((set, get) => ({
       payerId: null,
       isRegistering: false,
       selectedMethodId: null,
-      resolvedProvider: null,
-      resolvedPublicKey: null,
+      resolvedMethod: null,
       isProcessing: false,
       paymentStatus: null,
       paymentData: {},

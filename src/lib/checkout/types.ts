@@ -161,16 +161,26 @@ export interface PayRequestBody {
 }
 
 // ─── Pay Response (Atlas Core → our API → Client) ───────────────────────────
-export interface PayResponseBody {
-  success: boolean;
+// Union type: success vs error — forces type narrowing at call sites.
+export interface PayResponseSuccess {
+  success: true;
   transactionId: string;
   payerId?: string;
   methodType: PaymentMethodType;
+  methodId?: string;
   provider?: string;                    // Backend-selected provider (e.g. "MP_001")
   providerConfig?: Record<string, unknown>; // Provider-specific config (e.g. { publicKey: "APP_USR-xxx" })
   gatewayResponse: GatewayResponse;
   message?: string;
 }
+
+export interface PayResponseError {
+  success: false;
+  error: string;
+  code?: string;                       // Machine-readable error code for support
+}
+
+export type PayResponseBody = PayResponseSuccess | PayResponseError;
 
 // ─── Payment Status (polling) ───────────────────────────────────────────────
 export type PaymentStatus = "pending" | "processing" | "paid" | "failed" | "expired";
@@ -188,6 +198,13 @@ export interface StrategyProps {
 
 // ─── Mercado Pago SDK Instance (typed loosely to avoid bundling) ────────────
 type MercadopagoInstance = unknown;
+
+// ─── Backend-resolved method (stored after POST /checkout/pay) ───────────
+export interface ResolvedMethod {
+  methodType: PaymentMethodType;
+  provider: string;
+  publicKey?: string;
+}
 
 // ─── Store State ────────────────────────────────────────────────────────────
 export interface CheckoutState {
@@ -222,8 +239,7 @@ export interface CheckoutState {
   initMercadoPago: (publicKey: string) => Promise<void>;
 
   // Backend-resolved method (after POST /checkout/pay)
-  resolvedProvider: string | null;
-  resolvedPublicKey: string | null;
+  resolvedMethod: ResolvedMethod | null;
 
   // Actions
   setSession: (session: CheckoutSession) => void;
@@ -242,7 +258,7 @@ export interface CheckoutState {
   setTransactionId: (id: string) => void;
   setGatewayResponse: (response: GatewayResponse) => void;
   clearGatewayResponse: () => void;
-  setResolvedMethod: (provider: string, publicKey?: string) => void;
+  setResolvedMethod: (method: ResolvedMethod) => void;
 
   reset: () => void;
 }
